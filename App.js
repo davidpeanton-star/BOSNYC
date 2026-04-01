@@ -15,7 +15,7 @@ const firebaseConfig = {
   measurementId: "G-DBRNDPWLPB",
 };
 
-// 👇 LÍNEA 19: TU CLAVE DE GEMINI YA INSERTADA 👇
+// 👇 TU CLAVE DE GEMINI (PEGADA DIRECTAMENTE PARA EVITAR FALLOS DE ENTORNO) 👇
 const AI_API_KEY = "AIzaSyC9k6-Lf7lVZujVSYXNYBhGoApp-gyf-sQ";
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -789,15 +789,14 @@ export default function App() {
     setUploading(null);
   };
 
-  // 👇 ENLACES OFICIALES DE GOOGLE MAPS 👇
+  // 👇 GOOGLE MAPS: URLS OFICIALES Y ESTÁNDAR 👇
   const openSuperMap = () => {
     const acts = data.dias[sel].activities.filter((a) => a.address);
     if (acts.length === 0)
       return alert("No hay actividades con dirección guardada hoy.");
       
     if (acts.length === 1) {
-      const dest = encodeURIComponent(acts[0].address);
-      const url = `https://www.google.com/maps/search/?api=1&query=${dest}`;
+      const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(acts[0].address)}`;
       return window.open(url, "_blank", "noopener,noreferrer");
     }
     
@@ -806,9 +805,11 @@ export default function App() {
     const waypoints = acts
       .slice(1, -1)
       .map((a) => encodeURIComponent(a.address))
-      .join("%7C"); // %7C es la barra vertical | para separar waypoints
+      .join("|");
       
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
+    let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=walking`;
+    if (waypoints) url += `&waypoints=${waypoints}`;
+    
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -833,7 +834,7 @@ export default function App() {
     });
   };
 
-  // 👇 LLAMADA A LA IA DE GEMINI (CON TU NUEVA CLAVE) 👇
+  // 👇 CEREBRO DE IA: BLINDADO, ESTRICTO Y CON ALERTAS DE ERROR 👇
   const fetchSugg = async () => {
     if (!AI_API_KEY) {
       return alert("¡Falta la clave de Gemini en el código!");
@@ -845,36 +846,40 @@ export default function App() {
     const list = d.activities.map((a) => `${a.time}: ${a.title}`).join("; ");
     
     try {
-      const prompt = `Viaje familiar (2 adultos, adolescentes 16 y niño 9) a ${
-        d.city
-      }. Agenda actual: ${
-        list || "nada"
-      }. Sugiere 3 planes y 2 restaurantes familiares baratos. Responde SOLO en JSON válido sin markdown: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
+      const prompt = `Viaje familiar (2 adultos, adolescentes 16 y niño 9) a ${d.city}. Agenda actual: ${list || "nada"}. Sugiere 3 planes y 2 restaurantes familiares baratos. Responde SOLO con un JSON estricto y sin markdown: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
       
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${AI_API_KEY}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+          body: JSON.stringify({ 
+            contents: [{ parts: [{ text: prompt }] }],
+            // Obligamos a Google a devolver SÓLO datos puros
+            generationConfig: { responseMimeType: "application/json" }
+          }),
         }
       );
+
+      if (!res.ok) {
+        throw new Error(`Error de conexión con Google (Código ${res.status})`);
+      }
+
       const jsonStr = await res.json();
       
       if (jsonStr.error) {
-         console.error("Error de Gemini:", jsonStr.error);
-         alert("Error de Gemini: " + jsonStr.error.message);
-         setSugg({ error: true });
-         setAiLoading(false);
-         return;
+         throw new Error(jsonStr.error.message);
       }
       
       const content = jsonStr.candidates[0].content.parts[0].text;
-      setSugg(JSON.parse(content.replace(/```json|```/g, "").trim()));
+      setSugg(JSON.parse(content));
+
     } catch (err) {
-      console.error("Error en fetchSugg:", err);
+      console.error("Error técnico completo:", err);
+      alert("💥 ATENCIÓN DAVID, ESTE ES EL ERROR EXACTO:\n\n" + err.message);
       setSugg({ error: true });
     }
+    
     setAiLoading(false);
   };
 
@@ -1455,7 +1460,6 @@ export default function App() {
 
                         {a.address && (
                           <div style={{ marginBottom: 14 }}>
-                            {/* 👇 AHORA SÍ: ENLACES 100% OFICIALES DE MAPAS 👇 */}
                             <a
                               data-html2canvas-ignore="true"
                               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.address)}`}
