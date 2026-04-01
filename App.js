@@ -15,7 +15,7 @@ const firebaseConfig = {
   measurementId: "G-DBRNDPWLPB",
 };
 
-// 👇 PEGA AQUÍ TU NUEVA CLAVE DE GEMINI (ENTRE LAS COMILLAS) 👇
+// 👇 LÍNEA 19: TU CLAVE DE GEMINI YA INSERTADA 👇
 const AI_API_KEY = "AIzaSyC9k6-Lf7lVZujVSYXNYBhGoApp-gyf-sQ";
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -789,7 +789,7 @@ export default function App() {
     setUploading(null);
   };
 
-  // 👇 ENLACES DE GOOGLE MAPS OFICIALES 👇
+  // 👇 ENLACES OFICIALES DE GOOGLE MAPS 👇
   const openSuperMap = () => {
     const acts = data.dias[sel].activities.filter((a) => a.address);
     if (acts.length === 0)
@@ -806,7 +806,7 @@ export default function App() {
     const waypoints = acts
       .slice(1, -1)
       .map((a) => encodeURIComponent(a.address))
-      .join("%7C");
+      .join("%7C"); // %7C es la barra vertical | para separar waypoints
       
     const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
     window.open(url, "_blank", "noopener,noreferrer");
@@ -833,10 +833,10 @@ export default function App() {
     });
   };
 
-  // 👇 CONEXIÓN A GEMINI CON CLAVE VISIBLE 👇
+  // 👇 LLAMADA A LA IA DE GEMINI (CON TU NUEVA CLAVE) 👇
   const fetchSugg = async () => {
-    if (!AI_API_KEY || AI_API_KEY === "PON_AQUI_TU_NUEVA_CLAVE_DE_GEMINI") {
-      return alert("¡No has puesto tu clave de Gemini en la línea 19 del código!");
+    if (!AI_API_KEY) {
+      return alert("¡Falta la clave de Gemini en el código!");
     }
     
     setAiLoading(true);
@@ -847,7 +847,7 @@ export default function App() {
     try {
       const prompt = `Viaje familiar (2 adultos, adolescentes 16 y niño 9) a ${
         d.city
-      }. Agenda: ${
+      }. Agenda actual: ${
         list || "nada"
       }. Sugiere 3 planes y 2 restaurantes familiares baratos. Responde SOLO en JSON válido sin markdown: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
       
@@ -863,6 +863,7 @@ export default function App() {
       
       if (jsonStr.error) {
          console.error("Error de Gemini:", jsonStr.error);
+         alert("Error de Gemini: " + jsonStr.error.message);
          setSugg({ error: true });
          setAiLoading(false);
          return;
@@ -1454,6 +1455,7 @@ export default function App() {
 
                         {a.address && (
                           <div style={{ marginBottom: 14 }}>
+                            {/* 👇 AHORA SÍ: ENLACES 100% OFICIALES DE MAPAS 👇 */}
                             <a
                               data-html2canvas-ignore="true"
                               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.address)}`}
