@@ -15,7 +15,7 @@ const firebaseConfig = {
   measurementId: "G-DBRNDPWLPB",
 };
 
-// 👇 TU CLAVE DE LA IA (OCULTA EN LA CAJA FUERTE DE VERCEL) 👇
+// 👇 TU NUEVA CLAVE DE GEMINI (OCULTA EN LA CAJA FUERTE) 👇
 const AI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -789,15 +789,14 @@ export default function App() {
     setUploading(null);
   };
 
-  // 👇 API OFICIAL GARANTIZADA DE GOOGLE MAPS 👇
+  // 👇 API OFICIAL ESTÁNDAR DE GOOGLE MAPS (Abre App o Navegador) 👇
   const openSuperMap = () => {
     const acts = data.dias[sel].activities.filter((a) => a.address);
     if (acts.length === 0)
       return alert("No hay actividades con dirección guardada hoy.");
       
     if (acts.length === 1) {
-      const dest = encodeURIComponent(acts[0].address);
-      const url = `https://www.google.com/maps/search/?api=1&query=$${dest}`;
+      const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(acts[0].address)}`;
       return window.open(url, "_blank", "noopener,noreferrer");
     }
     
@@ -806,9 +805,9 @@ export default function App() {
     const waypoints = acts
       .slice(1, -1)
       .map((a) => encodeURIComponent(a.address))
-      .join("%7C"); // %7C es la barra vertical | en formato URL oficial
+      .join("%7C"); // %7C es el separador "|" oficial de Google Maps
       
-    const url = `https://www.google.com/maps/dir/?api=1&origin=$${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -818,9 +817,7 @@ export default function App() {
     let targetAct = sortedActivities.find((a) => parseTime(a.time) >= currTime);
     if (!targetAct) targetAct = sortedActivities[0];
     const loc = targetAct?.address || targetAct?.title || day.city;
-    const url =
-      "https://www.google.com/search?q=el+tiempo+por+horas+en+" +
-      encodeURIComponent(loc);
+    const url = `https://www.google.com/search?q=el+tiempo+por+horas+en+${encodeURIComponent(loc)}`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -835,10 +832,10 @@ export default function App() {
     });
   };
 
-  // 👇 LLAMADA A LA IA CORREGIDA (VERSIÓN 1.5 ESTABLE) 👇
+  // 👇 LLAMADA A GEMINI 1.5 (NUEVA CLAVE) 👇
   const fetchSugg = async () => {
     if (!AI_API_KEY || AI_API_KEY === "FALTA_CLAVE_IA")
-      return alert("¡La clave de IA no se ha cargado correctamente desde Vercel!");
+      return alert("¡La clave de IA no se ha cargado correctamente en CodeSandbox o Vercel!");
     
     setAiLoading(true);
     setSugg(null);
@@ -860,14 +857,18 @@ export default function App() {
         }
       );
       const jsonStr = await res.json();
-      setSugg(
-        JSON.parse(
-          jsonStr.candidates[0].content.parts[0].text
-            .replace(/```json|```/g, "")
-            .trim()
-        )
-      );
-    } catch {
+      
+      if (jsonStr.error) {
+         console.error("Error de Gemini:", jsonStr.error);
+         setSugg({ error: true });
+         setAiLoading(false);
+         return;
+      }
+      
+      const content = jsonStr.candidates[0].content.parts[0].text;
+      setSugg(JSON.parse(content.replace(/```json|```/g, "").trim()));
+    } catch (err) {
+      console.error("Error en fetchSugg:", err);
       setSugg({ error: true });
     }
     setAiLoading(false);
@@ -1450,10 +1451,10 @@ export default function App() {
 
                         {a.address && (
                           <div style={{ marginBottom: 14 }}>
-                            {/* 👇 AHORA SÍ: ENLACE OFICIAL DE MAPAS 👇 */}
+                            {/* 👇 ENLACES ESTÁNDAR PARA LA DIRECCIÓN INDIVIDUAL 👇 */}
                             <a
                               data-html2canvas-ignore="true"
-                              href={`https://www.google.com/maps/search/?api=1&query=$${encodeURIComponent(a.address)}`}
+                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.address)}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               style={{
