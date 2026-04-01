@@ -1,28 +1,52 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore, doc, onSnapshot, setDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import html2canvas from "html2canvas";
 
-// 👇 TUS DATOS DE FIREBASE CONFIGURADOS 👇
+// =========================
+// CONFIG
+// =========================
+// Para GitHub/Vite usa .env:
+//
+// VITE_FIREBASE_API_KEY=...
+// VITE_FIREBASE_AUTH_DOMAIN=...
+// VITE_FIREBASE_PROJECT_ID=...
+// VITE_FIREBASE_STORAGE_BUCKET=...
+// VITE_FIREBASE_MESSAGING_SENDER_ID=...
+// VITE_FIREBASE_APP_ID=...
+// VITE_FIREBASE_MEASUREMENT_ID=...
+// VITE_GEMINI_API_KEY=...
+
 const firebaseConfig = {
-  apiKey: "AIzaSyDfjxzkymYvxK6Dtuu_OTAHB3Cj3Z8iRlk",
-  authDomain: "viaje-usa-54b2f.firebaseapp.com",
-  projectId: "viaje-usa-54b2f",
-  storageBucket: "viaje-usa-54b2f.firebasestorage.app",
-  messagingSenderId: "461014107533",
-  appId: "1:461014107533:web:71a90887305c64d425e9c4",
-  measurementId: "G-DBRNDPWLPB",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "PON_AQUI_TU_API_KEY",
+  authDomain:
+    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ||
+    "PON_AQUI_TU_AUTH_DOMAIN",
+  projectId:
+    import.meta.env.VITE_FIREBASE_PROJECT_ID || "PON_AQUI_TU_PROJECT_ID",
+  storageBucket:
+    import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ||
+    "PON_AQUI_TU_STORAGE_BUCKET",
+  messagingSenderId:
+    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID ||
+    "PON_AQUI_TU_MESSAGING_SENDER_ID",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "PON_AQUI_TU_APP_ID",
+  measurementId:
+    import.meta.env.VITE_FIREBASE_MEASUREMENT_ID ||
+    "PON_AQUI_TU_MEASUREMENT_ID",
 };
 
-// 👇 TU CLAVE DE LA IA CONFIGURADA 👇
-const AI_API_KEY = "AIzaSyDSqRz_SekjRMjHmkzWRqkyyhPItcB3Qb8";
+const AI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const storage = getStorage(app);
 const TRIP_DOC = doc(db, "viajes", "boston_ny_2025");
 
+// =========================
+// DATA
+// =========================
 const ICONS = [
   "🏨", "✈️", "🚗", "🗺️", "🍽️", "🍕", "🦞", "🏀", "🗽", "🔭", "🎓", "🌳",
   "🌊", "🎭", "🛒", "🌅", "🏛️", "🚶", "🛍️", "🎨", "🌃", "🌉", "🏙️", "📸",
@@ -40,15 +64,17 @@ const CAT = {
 
 const parseTime = (t) => {
   if (!t) return 9999;
-  const str = t.toLowerCase();
+  const str = String(t).toLowerCase().trim();
+
   if (str.includes("mañana")) return 800;
   if (str.includes("mediodía") || str.includes("mediodia")) return 1300;
   if (str.includes("tarde")) return 1700;
   if (str.includes("noche")) return 2000;
+
   const match = str.match(/(\d{1,2})[:h\.]?(\d{2})?/);
   if (match) {
-    let h = parseInt(match[1]);
-    let m = parseInt(match[2] || 0);
+    let h = parseInt(match[1], 10);
+    const m = parseInt(match[2] || "0", 10);
     if (str.includes("pm") && h < 12) h += 12;
     return h * 100 + m;
   }
@@ -145,7 +171,7 @@ const INIT_DAYS = [
         done: false,
         budget: 0,
         link: "https://www.mit.edu",
-        address: "77 Massachusetts Ave, Cambridge",
+        address: "77 Massachusetts Ave, Cambridge, MA",
         category: "activity",
       },
       {
@@ -271,7 +297,7 @@ const INIT_DAYS = [
         done: false,
         budget: 0,
         link: "",
-        address: "Manhattan, New York",
+        address: "Manhattan, New York, NY",
         category: "hotel",
       },
       {
@@ -283,7 +309,7 @@ const INIT_DAYS = [
         done: false,
         budget: 40,
         link: "",
-        address: "Times Square, New York",
+        address: "Times Square, New York, NY",
         category: "activity",
       },
     ],
@@ -304,7 +330,7 @@ const INIT_DAYS = [
         done: false,
         budget: 100,
         link: "",
-        address: "Battery Park, New York",
+        address: "Battery Park, New York, NY",
         category: "activity",
       },
       {
@@ -316,7 +342,7 @@ const INIT_DAYS = [
         done: false,
         budget: 0,
         link: "",
-        address: "Brooklyn Bridge, New York",
+        address: "Brooklyn Bridge, New York, NY",
         category: "activity",
       },
       {
@@ -361,7 +387,7 @@ const INIT_DAYS = [
         done: false,
         budget: 80,
         link: "",
-        address: "The Bronx, New York",
+        address: "The Bronx, New York, NY",
         category: "activity",
       },
       {
@@ -373,7 +399,7 @@ const INIT_DAYS = [
         done: false,
         budget: 40,
         link: "",
-        address: "Central Park, New York",
+        address: "Central Park, New York, NY",
         category: "activity",
       },
       {
@@ -385,7 +411,7 @@ const INIT_DAYS = [
         done: false,
         budget: 120,
         link: "",
-        address: "45 E 42nd St, New York",
+        address: "45 E 42nd St, New York, NY",
         category: "activity",
       },
     ],
@@ -406,7 +432,7 @@ const INIT_DAYS = [
         done: false,
         budget: 30,
         link: "",
-        address: "Central Park, New York",
+        address: "Central Park, New York, NY",
         category: "activity",
       },
       {
@@ -418,7 +444,7 @@ const INIT_DAYS = [
         done: false,
         budget: 80,
         link: "",
-        address: "1000 Fifth Ave, New York",
+        address: "1000 Fifth Ave, New York, NY",
         category: "activity",
       },
       {
@@ -430,7 +456,7 @@ const INIT_DAYS = [
         done: false,
         budget: 300,
         link: "",
-        address: "Times Square, New York",
+        address: "Times Square, New York, NY",
         category: "activity",
       },
     ],
@@ -451,7 +477,7 @@ const INIT_DAYS = [
         done: false,
         budget: 0,
         link: "",
-        address: "The High Line, New York",
+        address: "The High Line, New York, NY",
         category: "activity",
       },
       {
@@ -463,7 +489,7 @@ const INIT_DAYS = [
         done: false,
         budget: 70,
         link: "",
-        address: "75 9th Ave, New York",
+        address: "75 9th Ave, New York, NY",
         category: "restaurant",
       },
       {
@@ -475,7 +501,7 @@ const INIT_DAYS = [
         done: false,
         budget: 40,
         link: "",
-        address: "180 Greenwich St, New York",
+        address: "180 Greenwich St, New York, NY",
         category: "activity",
       },
     ],
@@ -496,7 +522,7 @@ const INIT_DAYS = [
         done: false,
         budget: 30,
         link: "",
-        address: "Manhattan, New York",
+        address: "Manhattan, New York, NY",
         category: "transport",
       },
       {
@@ -508,7 +534,7 @@ const INIT_DAYS = [
         done: false,
         budget: 150,
         link: "",
-        address: "I-95 North",
+        address: "Boston Logan International Airport, Boston, MA",
         category: "transport",
       },
       {
@@ -520,15 +546,68 @@ const INIT_DAYS = [
         done: false,
         budget: 0,
         link: "",
-        address: "Boston Logan International Airport",
+        address: "Boston Logan International Airport, Boston, MA",
         category: "transport",
       },
     ],
   },
 ];
 
+// =========================
+// HELPERS
+// =========================
+function cleanLocation(value) {
+  if (!value) return "";
+  return String(value).replace(/\s+/g, " ").trim();
+}
+
+function openExternalUrl(url) {
+  try {
+    const newWindow = window.open(url, "_blank", "noopener,noreferrer");
+    if (!newWindow) {
+      window.location.href = url;
+    }
+  } catch {
+    window.location.href = url;
+  }
+}
+
+function buildGoogleMapsSearchUrl(query) {
+  const cleanQuery = cleanLocation(query);
+  if (!cleanQuery) return "";
+  const params = new URLSearchParams({
+    api: "1",
+    query: cleanQuery,
+  });
+  return `https://www.google.com/maps/search/?${params.toString()}`;
+}
+
+function buildGoogleMapsDirectionsUrl(activities) {
+  const locations = activities
+    .map((a) => cleanLocation(a.address || a.title))
+    .filter(Boolean);
+
+  if (locations.length === 0) return "";
+  if (locations.length === 1) return buildGoogleMapsSearchUrl(locations[0]);
+
+  const params = new URLSearchParams({
+    api: "1",
+    origin: locations[0],
+    destination: locations[locations.length - 1],
+    travelmode: "walking",
+  });
+
+  const midPoints = locations.slice(1, -1);
+  if (midPoints.length > 0) {
+    params.set("waypoints", midPoints.join("|"));
+  }
+
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
 function SuggCard({ act, col, onAdd }) {
   const [added, setAdded] = useState(false);
+
   return (
     <div
       style={{
@@ -536,7 +615,7 @@ function SuggCard({ act, col, onAdd }) {
         borderRadius: 16,
         marginBottom: 10,
         padding: 16,
-        border: `1.5px solid #eee`,
+        border: "1.5px solid #eee",
         boxShadow: "0 3px 10px rgba(0,0,0,0.06)",
       }}
     >
@@ -546,6 +625,7 @@ function SuggCard({ act, col, onAdd }) {
           <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
             {act.title}
           </div>
+
           <div
             style={{
               display: "flex",
@@ -559,7 +639,8 @@ function SuggCard({ act, col, onAdd }) {
                 ⏰ {act.time}
               </span>
             )}
-            {act.budget > 0 && (
+
+            {Number(act.budget) > 0 && (
               <span
                 style={{
                   fontSize: 14,
@@ -574,6 +655,7 @@ function SuggCard({ act, col, onAdd }) {
               </span>
             )}
           </div>
+
           <p
             style={{
               margin: "0 0 10px",
@@ -586,6 +668,7 @@ function SuggCard({ act, col, onAdd }) {
           </p>
         </div>
       </div>
+
       <button
         onClick={() => {
           if (!added) {
@@ -636,19 +719,24 @@ export default function App() {
         if (docSnap.exists()) {
           const fetchedData = docSnap.data();
           if (!fetchedData.checklist) fetchedData.checklist = INIT_CHECKLIST;
+          if (!fetchedData.dias) fetchedData.dias = INIT_DAYS;
           setData(fetchedData);
           setSaveStatus("cloud");
         } else {
           const initial = { dias: INIT_DAYS, checklist: INIT_CHECKLIST };
           setDoc(TRIP_DOC, initial);
           setData(initial);
+          setSaveStatus("cloud");
         }
       },
       (error) => {
         console.error("Firebase error:", error);
-        if (!data) setData({ dias: INIT_DAYS, checklist: INIT_CHECKLIST });
+        if (!data) {
+          setData({ dias: INIT_DAYS, checklist: INIT_CHECKLIST });
+        }
       }
     );
+
     return () => unsubscribe();
   }, []);
 
@@ -659,43 +747,73 @@ export default function App() {
           "https://api.open-meteo.com/v1/forecast?latitude=42.3601&longitude=-71.0589&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=America%2FNew_York&forecast_days=16"
         );
         const dataB = await resB.json();
+
         const resNY = await fetch(
           "https://api.open-meteo.com/v1/forecast?latitude=40.7128&longitude=-74.0060&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=America%2FNew_York&forecast_days=16"
         );
         const dataNY = await resNY.json();
+
         const WMO = {
-          0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️", 45: "🌫️", 48: "🌫️", 51: "🌧️",
-          53: "🌧️", 55: "🌧️", 61: "☔", 63: "☔", 65: "☔", 71: "🌨️",
-          73: "🌨️", 75: "🌨️", 80: "🌦️", 81: "🌦️", 82: "🌦️", 95: "⛈️",
-          96: "⛈️", 99: "⛈️",
+          0: "☀️",
+          1: "🌤️",
+          2: "⛅",
+          3: "☁️",
+          45: "🌫️",
+          48: "🌫️",
+          51: "🌧️",
+          53: "🌧️",
+          55: "🌧️",
+          61: "☔",
+          63: "☔",
+          65: "☔",
+          71: "🌨️",
+          73: "🌨️",
+          75: "🌨️",
+          80: "🌦️",
+          81: "🌦️",
+          82: "🌦️",
+          95: "⛈️",
+          96: "⛈️",
+          99: "⛈️",
         };
+
         const wMap = {};
-        const process = (d, prefix) =>
+
+        const process = (d, prefix) => {
           d.daily.time.forEach((dt, i) => {
-            wMap[`${prefix}-${parseInt(dt.split("-")[2], 10)}`] = {
+            const dayNumber = parseInt(dt.split("-")[2], 10);
+            wMap[`${prefix}-${dayNumber}`] = {
               icon: WMO[d.daily.weather_code[i]] || "🌤️",
               max: Math.round(d.daily.temperature_2m_max[i]),
               min: Math.round(d.daily.temperature_2m_min[i]),
             };
           });
+        };
+
         process(dataB, "Boston");
         process(dataNY, "New York");
         setWeatherData(wMap);
-      } catch (e) {}
+      } catch (e) {
+        console.error("Weather error:", e);
+      }
     };
+
     fetchWeather();
   }, []);
 
   const persist = async (newData) => {
     setData(newData);
     setSaveStatus("saving");
+
     try {
       await setDoc(TRIP_DOC, newData);
       setSaveStatus("saved");
-    } catch {
+      setTimeout(() => setSaveStatus("cloud"), 2200);
+    } catch (e) {
+      console.error("Save error:", e);
       setSaveStatus("err");
+      setTimeout(() => setSaveStatus(""), 2200);
     }
-    setTimeout(() => setSaveStatus(saveStatus === "err" ? "" : "cloud"), 2200);
   };
 
   const openAdd = () => {
@@ -713,7 +831,7 @@ export default function App() {
     setEditModal({ di: sel, ai: -1 });
     setIconPicker(false);
   };
-  
+
   const openEdit = (di, ai) => {
     setForm({ ...data.dias[di].activities[ai] });
     setEditModal({ di, ai });
@@ -722,25 +840,41 @@ export default function App() {
 
   const saveAct = () => {
     if (!form.title?.trim()) return;
+
     const nDias = data.dias.map((d, i) => {
       if (i !== editModal.di) return d;
-      const a = [...d.activities];
-      if (editModal.ai === -1) a.push({ ...form, done: false });
-      else a[editModal.ai] = form;
-      return { ...d, activities: a };
+
+      const activities = [...d.activities];
+      const payload = {
+        ...form,
+        title: form.title?.trim() || "",
+        desc: form.desc?.trim() || "",
+        address: form.address?.trim() || "",
+        link: form.link?.trim() || "",
+        budget: form.budget === "" ? "" : Number(form.budget),
+      };
+
+      if (editModal.ai === -1) {
+        activities.push({ ...payload, done: false });
+      } else {
+        activities[editModal.ai] = payload;
+      }
+
+      return { ...d, activities };
     });
+
     persist({ ...data, dias: nDias });
     setEditModal(null);
   };
 
   const toggleDone = (di, ai) => {
-    const nDias = [...data.dias];
+    const nDias = structuredClone(data.dias);
     nDias[di].activities[ai].done = !nDias[di].activities[ai].done;
     persist({ ...data, dias: nDias });
   };
 
   const updateComments = (text) => {
-    const nDias = [...data.dias];
+    const nDias = structuredClone(data.dias);
     nDias[sel].comments = text;
     setData({ ...data, dias: nDias });
   };
@@ -751,13 +885,14 @@ export default function App() {
         ? d
         : { ...d, activities: d.activities.filter((_, j) => j !== ai) }
     );
+
     persist({ ...data, dias: nDias });
     setDelConfirm(null);
   };
 
   const toggleCheck = (idx) => {
     if (!data.checklist) return;
-    const nCheck = [...data.checklist];
+    const nCheck = structuredClone(data.checklist);
     nCheck[idx].done = !nCheck[idx].done;
     persist({ ...data, checklist: nCheck });
   };
@@ -765,112 +900,148 @@ export default function App() {
   const addCheck = () => {
     if (!newCheckItem.trim()) return;
     const nCheck = data.checklist ? [...data.checklist] : [];
-    nCheck.push({ id: Date.now(), text: newCheckItem, done: false });
+    nCheck.push({ id: Date.now(), text: newCheckItem.trim(), done: false });
     persist({ ...data, checklist: nCheck });
     setNewCheckItem("");
   };
 
   const handlePhotoUpload = async (e, di, ai) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
+
     setUploading(ai);
+
     try {
       const fileRef = ref(storage, `foto_actividad_${di}_${ai}_${Date.now()}`);
       await uploadBytes(fileRef, file);
       const url = await getDownloadURL(fileRef);
-      const nDias = [...data.dias];
+
+      const nDias = structuredClone(data.dias);
       nDias[di].activities[ai].photo = url;
       await persist({ ...data, dias: nDias });
     } catch (err) {
+      console.error("Photo upload error:", err);
       alert(
-        "Error al subir foto. Asegúrate de haber abierto las reglas de Firebase Storage."
+        "Error al subir foto. Revisa las reglas de Firebase Storage y el bucket."
       );
     }
+
     setUploading(null);
   };
 
-  // 👇 API OFICIAL ESTABLE DE GOOGLE MAPS 👇
+  const days = data?.dias || [];
+  const day = days[sel];
+  const col = day ? getDayColor(day.city, day.label) : "#1a73e8";
+
+  const sortedActivities = useMemo(() => {
+    if (!day?.activities) return [];
+    return day.activities
+      .map((act, index) => ({ ...act, originalIndex: index }))
+      .sort((a, b) => parseTime(a.time) - parseTime(b.time));
+  }, [day]);
+
+  const total = useMemo(() => {
+    return days.reduce(
+      (s, d) =>
+        s +
+        d.activities.reduce((ss, a) => ss + (parseFloat(a.budget) || 0), 0),
+      0
+    );
+  }, [days]);
+
   const openSuperMap = () => {
-    const acts = data.dias[sel].activities.filter((a) => a.address);
-    if (acts.length === 0)
-      return alert("No hay actividades con dirección guardada hoy.");
-      
-    if (acts.length === 1) {
-      const dest = encodeURIComponent(acts[0].address);
-      const url = `https://www.google.com/maps/search/?api=1&query=${dest}`;
-      return window.open(url, "_blank", "noopener,noreferrer");
+    if (!day?.activities?.length) return;
+
+    const acts = sortedActivities.filter((a) => cleanLocation(a.address));
+    if (acts.length === 0) {
+      alert("No hay actividades con dirección guardada hoy.");
+      return;
     }
-    
-    const origin = encodeURIComponent(acts[0].address);
-    const dest = encodeURIComponent(acts[acts.length - 1].address);
-    const waypoints = acts
-      .slice(1, -1)
-      .map((a) => encodeURIComponent(a.address))
-      .join("%7C"); // Usamos %7C que es el código URL oficial para el separador "|"
-      
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
-    window.open(url, "_blank", "noopener,noreferrer");
+
+    const url = buildGoogleMapsDirectionsUrl(acts);
+    if (!url) {
+      alert("No se ha podido generar la ruta de Google Maps.");
+      return;
+    }
+
+    openExternalUrl(url);
   };
 
   const handleWeatherClick = () => {
+    if (!day) return;
+
     const now = new Date();
     const currTime = now.getHours() * 100 + now.getMinutes();
+
     let targetAct = sortedActivities.find((a) => parseTime(a.time) >= currTime);
     if (!targetAct) targetAct = sortedActivities[0];
-    const loc = targetAct?.address || targetAct?.title || day.city;
+
+    const loc = cleanLocation(targetAct?.address || targetAct?.title || day.city);
+    if (!loc) return;
+
     const url =
-      "https://www.google.com/search?q=el+tiempo+por+horas+en+" +
-      encodeURIComponent(loc);
-    window.open(url, "_blank", "noopener,noreferrer");
+      "https://www.google.com/search?q=" +
+      encodeURIComponent(`el tiempo por horas en ${loc}`);
+
+    openExternalUrl(url);
   };
 
   const exportDayImage = () => {
     const el = document.getElementById("export-area");
     if (!el) return;
+
     html2canvas(el, { scale: 2, useCORS: true }).then((canvas) => {
       const link = document.createElement("a");
-      link.download = `Plan_${data.dias[sel].date.replace(/ /g, "_")}.png`;
+      link.download = `Plan_${day.date.replace(/ /g, "_")}.png`;
       link.href = canvas.toDataURL("image/png");
       link.click();
     });
   };
 
   const fetchSugg = async () => {
-    if (AI_API_KEY === "FALTA_CLAVE_IA")
-      return alert("¡Pon tu clave de IA en el código primero!");
+    if (!AI_API_KEY) {
+      alert("Falta VITE_GEMINI_API_KEY en tu .env");
+      return;
+    }
+
     setAiLoading(true);
     setSugg(null);
-    const d = data.dias[sel];
-    const list = d.activities.map((a) => `${a.time}: ${a.title}`).join("; ");
+
     try {
+      const d = data.dias[sel];
+      const list = d.activities.map((a) => `${a.time}: ${a.title}`).join("; ");
+
       const prompt = `Viaje familiar (2 adultos, adolescentes 16 y niño 9) a ${
         d.city
       }. Agenda: ${
         list || "nada"
       }. Sugiere 3 planes y 2 restaurantes familiares baratos. Responde SOLO en JSON válido sin markdown: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
+
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AI_API_KEY}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+          }),
         }
       );
-      const jsonStr = await res.json();
-      setSugg(
-        JSON.parse(
-          jsonStr.candidates[0].content.parts[0].text
-            .replace(/```json|```/g, "")
-            .trim()
-        )
-      );
-    } catch {
+
+      const json = await res.json();
+      const raw = json?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+      const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+      setSugg(parsed);
+    } catch (e) {
+      console.error("AI suggestions error:", e);
       setSugg({ error: true });
+    } finally {
+      setAiLoading(false);
     }
-    setAiLoading(false);
   };
 
-  if (!data)
+  if (!data || !day) {
     return (
       <div
         style={{
@@ -881,18 +1052,11 @@ export default function App() {
           fontSize: 24,
         }}
       >
-        Cargando Viaje...
+        Cargando viaje...
       </div>
     );
+  }
 
-  const days = data.dias;
-  const day = days[sel];
-  const col = getDayColor(day.city, day.label);
-  const total = days.reduce(
-    (s, d) =>
-      s + d.activities.reduce((ss, a) => ss + (parseFloat(a.budget) || 0), 0),
-    0
-  );
   const inp = {
     width: "100%",
     padding: "14px 16px",
@@ -904,13 +1068,10 @@ export default function App() {
     fontFamily: "inherit",
   };
 
-  const dayNum = parseInt(day.date.replace(/\D/g, ""), 10);
+  const dayNumMatch = day.date.match(/\b(\d{1,2})\b/);
+  const dayNum = dayNumMatch ? parseInt(dayNumMatch[1], 10) : null;
   const cityKey = day.city.includes("New York") ? "New York" : "Boston";
-  const todayWeather = weatherData[`${cityKey}-${dayNum}`];
-
-  const sortedActivities = day.activities
-    .map((act, index) => ({ ...act, originalIndex: index }))
-    .sort((a, b) => parseTime(a.time) - parseTime(b.time));
+  const todayWeather = dayNum ? weatherData[`${cityKey}-${dayNum}`] : null;
 
   return (
     <div
@@ -923,7 +1084,6 @@ export default function App() {
         paddingBottom: 80,
       }}
     >
-      {/* HEADER PRINCIPAL */}
       <div
         className="app-header-nav"
         style={{
@@ -947,6 +1107,7 @@ export default function App() {
               3–11 Abril · Viaje David, Sandra, Inés y Álvaro
             </p>
           </div>
+
           <div style={{ textAlign: "right" }}>
             <div
               style={{
@@ -972,13 +1133,17 @@ export default function App() {
                 ? "✅ Guardado"
                 : saveStatus === "cloud"
                 ? "☁️ En vivo"
+                : saveStatus === "err"
+                ? "❌ Error"
                 : "..."}
             </div>
+
             <div style={{ fontSize: 18, fontWeight: 800 }}>
               💰 {total.toFixed(0)}€
             </div>
           </div>
         </div>
+
         <div
           style={{
             display: "flex",
@@ -1020,7 +1185,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* SELECTOR DE DÍAS */}
       {view !== "checklist" && view !== "budget" && view !== "summary" && (
         <div
           className="day-selector-nav"
@@ -1065,13 +1229,9 @@ export default function App() {
       )}
 
       <div style={{ padding: "20px 20px 0" }}>
-        {/* === VISTA: PLAN === */}
         {view === "plan" && (
           <>
-            <div
-              id="export-area"
-              style={{ background: "#f4f7f9", paddingBottom: 10 }}
-            >
+            <div id="export-area" style={{ background: "#f4f7f9", paddingBottom: 10 }}>
               <div
                 style={{
                   background: `linear-gradient(135deg,${col},${col}dd)`,
@@ -1090,9 +1250,7 @@ export default function App() {
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: 40, marginBottom: 8 }}>
-                      {day.emoji}
-                    </div>
+                    <div style={{ fontSize: 40, marginBottom: 8 }}>{day.emoji}</div>
                     <h2
                       style={{
                         margin: "0 0 6px",
@@ -1102,12 +1260,11 @@ export default function App() {
                     >
                       {day.date}
                     </h2>
-                    <div
-                      style={{ fontSize: 18, opacity: 0.95, fontWeight: 700 }}
-                    >
+                    <div style={{ fontSize: 18, opacity: 0.95, fontWeight: 700 }}>
                       📍 {day.city}
                     </div>
                   </div>
+
                   <div style={{ textAlign: "right" }}>
                     <div
                       onClick={handleWeatherClick}
@@ -1131,9 +1288,7 @@ export default function App() {
                             gap: 10,
                           }}
                         >
-                          <span style={{ fontSize: 28 }}>
-                            {todayWeather.icon}
-                          </span>
+                          <span style={{ fontSize: 28 }}>{todayWeather.icon}</span>
                           <div
                             style={{
                               fontSize: 16,
@@ -1156,9 +1311,8 @@ export default function App() {
                         </div>
                       )}
                     </div>
-                    <div
-                      style={{ fontSize: 16, fontWeight: 800, opacity: 0.9 }}
-                    >
+
+                    <div style={{ fontSize: 16, fontWeight: 800, opacity: 0.9 }}>
                       {day.activities.length} planes hoy
                     </div>
                   </div>
@@ -1189,6 +1343,7 @@ export default function App() {
                 >
                   🗺️ Súper Mapa
                 </button>
+
                 <button
                   onClick={exportDayImage}
                   style={{
@@ -1215,9 +1370,11 @@ export default function App() {
                 const ci = CAT[a.category] || CAT.activity;
                 const isExp = exp === i;
                 const isUploadingThis = uploading === a.originalIndex;
+                const mapsUrl = a.address ? buildGoogleMapsSearchUrl(a.address) : "";
+
                 return (
                   <div
-                    key={i}
+                    key={`${a.title}-${i}`}
                     style={{
                       background: "white",
                       borderRadius: 20,
@@ -1227,7 +1384,7 @@ export default function App() {
                         a.done
                           ? "#27ae60"
                           : a.confirmed
-                          ? col + "66"
+                          ? `${col}66`
                           : "transparent"
                       }`,
                       opacity: a.done ? 0.75 : 1,
@@ -1244,9 +1401,8 @@ export default function App() {
                       }}
                       onClick={() => setExp(isExp ? null : i)}
                     >
-                      <span style={{ fontSize: 34, flexShrink: 0 }}>
-                        {a.icon}
-                      </span>
+                      <span style={{ fontSize: 34, flexShrink: 0 }}>{a.icon}</span>
+
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div
                           style={{
@@ -1267,6 +1423,7 @@ export default function App() {
                           >
                             {a.title}
                           </span>
+
                           {a.confirmed && !a.done && (
                             <span
                               style={{
@@ -1281,10 +1438,10 @@ export default function App() {
                               Reserva OK
                             </span>
                           )}
-                          {a.photo && !isExp && (
-                            <span style={{ fontSize: 16 }}>📸</span>
-                          )}
+
+                          {a.photo && !isExp && <span style={{ fontSize: 16 }}>📸</span>}
                         </div>
+
                         <div
                           style={{
                             display: "flex",
@@ -1305,6 +1462,7 @@ export default function App() {
                           >
                             ⏰ {a.time}
                           </span>
+
                           <span
                             style={{
                               fontSize: 16,
@@ -1319,6 +1477,7 @@ export default function App() {
                           </span>
                         </div>
                       </div>
+
                       <div
                         data-html2canvas-ignore="true"
                         style={{
@@ -1350,7 +1509,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    {(isExp || window.html2canvas) && (
+                    {isExp && (
                       <div
                         style={{
                           padding: "0 20px 20px 68px",
@@ -1386,6 +1545,7 @@ export default function App() {
                                   border: "1px solid #eee",
                                 }}
                               />
+
                               <label
                                 style={{
                                   position: "absolute",
@@ -1426,7 +1586,7 @@ export default function App() {
                                 color: "#4b5563",
                                 fontWeight: 800,
                                 fontSize: 16,
-                                border: `3px dashed #d1d5db`,
+                                border: "3px dashed #d1d5db",
                               }}
                             >
                               {isUploadingThis
@@ -1447,10 +1607,9 @@ export default function App() {
 
                         {a.address && (
                           <div style={{ marginBottom: 14 }}>
-                            {/* 👇 AHORA SÍ: ENLACE OFICIAL DE MAPAS 👇 */}
                             <a
                               data-html2canvas-ignore="true"
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.address)}`}
+                              href={mapsUrl}
                               target="_blank"
                               rel="noopener noreferrer"
                               style={{
@@ -1468,14 +1627,13 @@ export default function App() {
                             >
                               📍 Ir a: {a.address} ↗
                             </a>
-                            <div
-                              style={{ display: "none" }}
-                              className="show-on-export"
-                            >
+
+                            <div style={{ display: "none" }} className="show-on-export">
                               📍 {a.address}
                             </div>
                           </div>
                         )}
+
                         <div
                           data-html2canvas-ignore="true"
                           style={{ display: "flex", gap: 10, marginTop: 16 }}
@@ -1497,6 +1655,7 @@ export default function App() {
                           >
                             ✏️ Editar
                           </button>
+
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1521,6 +1680,7 @@ export default function App() {
                 );
               })}
             </div>
+
             <button
               onClick={openAdd}
               style={{
@@ -1541,7 +1701,6 @@ export default function App() {
           </>
         )}
 
-        {/* === VISTA: BITÁCORA === */}
         {view === "logbook" && (
           <div
             style={{
@@ -1562,6 +1721,7 @@ export default function App() {
             >
               📖 Diario del día
             </h3>
+
             <p
               style={{
                 fontSize: 16,
@@ -1573,6 +1733,7 @@ export default function App() {
               Escribe aquí cómo ha ido el día. Para guardar fotos, hazlo
               directamente en las actividades de la pestaña 📅 Plan.
             </p>
+
             <textarea
               value={day.comments || ""}
               onChange={(e) => updateComments(e.target.value)}
@@ -1586,6 +1747,7 @@ export default function App() {
                 lineHeight: 1.6,
               }}
             />
+
             <button
               onClick={() => persist(data)}
               style={{
@@ -1603,6 +1765,7 @@ export default function App() {
             >
               💾 Guardar notas
             </button>
+
             <h4
               style={{
                 fontSize: 18,
@@ -1613,8 +1776,9 @@ export default function App() {
                 fontWeight: 900,
               }}
             >
-              🏆 Hitos Completados Hoy
+              🏆 Hitos completados hoy
             </h4>
+
             {sortedActivities
               .filter((a) => a.done)
               .map((a, i) => (
@@ -1642,7 +1806,6 @@ export default function App() {
           </div>
         )}
 
-        {/* === VISTA: MALETA === */}
         {view === "checklist" && (
           <div
             style={{
@@ -1661,8 +1824,9 @@ export default function App() {
                 color: "#111827",
               }}
             >
-              🎒 Lista de Preparativos
+              🎒 Lista de preparativos
             </h3>
+
             <div style={{ marginBottom: 24 }}>
               {data.checklist?.map((item, idx) => (
                 <div
@@ -1697,6 +1861,7 @@ export default function App() {
                   >
                     {item.done && "✓"}
                   </div>
+
                   <span
                     style={{
                       fontSize: 18,
@@ -1710,6 +1875,7 @@ export default function App() {
                 </div>
               ))}
             </div>
+
             <div style={{ display: "flex", gap: 10 }}>
               <input
                 value={newCheckItem}
@@ -1718,6 +1884,7 @@ export default function App() {
                 style={{ ...inp, flex: 1 }}
                 onKeyDown={(e) => e.key === "Enter" && addCheck()}
               />
+
               <button
                 onClick={addCheck}
                 style={{
@@ -1737,7 +1904,6 @@ export default function App() {
           </div>
         )}
 
-        {/* === VISTA: PRESUPUESTO === */}
         {view === "budget" && (
           <div
             style={{
@@ -1758,11 +1924,13 @@ export default function App() {
             >
               💰 Resumen de gastos
             </h3>
+
             {days.map((d, di) => {
               const t = d.activities.reduce(
                 (s, a) => s + (parseFloat(a.budget) || 0),
                 0
               );
+
               return (
                 <div
                   key={di}
@@ -1791,6 +1959,7 @@ export default function App() {
                       {d.date}
                     </span>
                   </div>
+
                   <span
                     style={{
                       fontWeight: 900,
@@ -1803,6 +1972,7 @@ export default function App() {
                 </div>
               );
             })}
+
             <div
               style={{
                 display: "flex",
@@ -1818,7 +1988,6 @@ export default function App() {
           </div>
         )}
 
-        {/* === VISTA: SUGERENCIAS === */}
         {view === "suggestions" && (
           <div>
             <div
@@ -1839,6 +2008,7 @@ export default function App() {
               >
                 Planes recomendados por IA
               </p>
+
               <button
                 onClick={fetchSugg}
                 disabled={aiLoading}
@@ -1850,31 +2020,54 @@ export default function App() {
                   padding: "12px 20px",
                   fontSize: 16,
                   fontWeight: 900,
+                  cursor: aiLoading ? "default" : "pointer",
                 }}
               >
                 {aiLoading ? "⏳ Pensando..." : "🔄 Buscar ideas"}
               </button>
             </div>
+
+            {sugg?.error && (
+              <div
+                style={{
+                  background: "#fff7ed",
+                  color: "#9a3412",
+                  border: "1px solid #fdba74",
+                  borderRadius: 14,
+                  padding: 16,
+                  marginBottom: 16,
+                  fontWeight: 700,
+                }}
+              >
+                No se pudieron cargar sugerencias ahora mismo.
+              </div>
+            )}
+
             {sugg?.activities?.map((a, i) => (
               <SuggCard
                 key={i}
                 act={a}
                 col={col}
                 onAdd={() => {
-                  const nDias = [...data.dias];
-                  nDias[sel].activities.push({ ...a, category: "activity" });
+                  const nDias = structuredClone(data.dias);
+                  nDias[sel].activities.push({ ...a, category: "activity", done: false });
                   persist({ ...data, dias: nDias });
                 }}
               />
             ))}
+
             {sugg?.restaurants?.map((r, i) => (
               <SuggCard
                 key={i}
                 act={r}
                 col={col}
                 onAdd={() => {
-                  const nDias = [...data.dias];
-                  nDias[sel].activities.push({ ...r, category: "restaurant" });
+                  const nDias = structuredClone(data.dias);
+                  nDias[sel].activities.push({
+                    ...r,
+                    category: "restaurant",
+                    done: false,
+                  });
                   persist({ ...data, dias: nDias });
                 }}
               />
@@ -1882,7 +2075,6 @@ export default function App() {
           </div>
         )}
 
-        {/* === VISTA: RESUMEN FINAL === */}
         {view === "summary" && (
           <div
             style={{
@@ -1910,8 +2102,9 @@ export default function App() {
                   color: "#111827",
                 }}
               >
-                📖 Gran Resumen
+                📖 Gran resumen
               </h3>
+
               <button
                 onClick={() => window.print()}
                 style={{
@@ -1928,6 +2121,7 @@ export default function App() {
                 🖨️ Guardar PDF
               </button>
             </div>
+
             <div
               className="print-only-header"
               style={{
@@ -1946,12 +2140,13 @@ export default function App() {
                   color: "#111827",
                 }}
               >
-                🇺🇸 Nuestro Viaje a Boston & NY
+                🇺🇸 Nuestro viaje a Boston & NY
               </h1>
               <p style={{ fontSize: 20, color: "#4b5563", fontWeight: 700 }}>
                 Viaje David, Sandra, Inés y Álvaro • Abril 2025
               </p>
             </div>
+
             {days.map((d, i) => (
               <div
                 key={i}
@@ -1974,9 +2169,9 @@ export default function App() {
                     fontWeight: 900,
                   }}
                 >
-                  <span style={{ fontSize: 32 }}>{d.emoji}</span> {d.date} -{" "}
-                  {d.city}
+                  <span style={{ fontSize: 32 }}>{d.emoji}</span> {d.date} - {d.city}
                 </h4>
+
                 {d.comments && (
                   <div
                     style={{
@@ -2001,9 +2196,8 @@ export default function App() {
                     </p>
                   </div>
                 )}
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 24 }}
-                >
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
                   {d.activities.map((act, actIdx) => (
                     <div key={actIdx} style={{ pageBreakInside: "avoid" }}>
                       <div
@@ -2025,6 +2219,7 @@ export default function App() {
                           >
                             {act.title}
                           </div>
+
                           {act.time && (
                             <div
                               style={{
@@ -2038,6 +2233,7 @@ export default function App() {
                           )}
                         </div>
                       </div>
+
                       {act.photo && (
                         <div style={{ marginTop: 14 }}>
                           <img
@@ -2058,6 +2254,7 @@ export default function App() {
                 </div>
               </div>
             ))}
+
             <div
               style={{
                 marginTop: 40,
@@ -2077,14 +2274,13 @@ export default function App() {
                   fontWeight: 900,
                 }}
               >
-                💰 Presupuesto Final del Viaje: {total.toFixed(0)}€
+                💰 Presupuesto final del viaje: {total.toFixed(0)}€
               </h3>
             </div>
           </div>
         )}
       </div>
 
-      {/* MODALES EDITAR Y AÑADIR */}
       {editModal && (
         <div
           style={{
@@ -2119,10 +2315,9 @@ export default function App() {
               }}
             >
               <h3 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>
-                {editModal.ai === -1
-                  ? "➕ Añadir actividad"
-                  : "✏️ Editar actividad"}
+                {editModal.ai === -1 ? "➕ Añadir actividad" : "✏️ Editar actividad"}
               </h3>
+
               <button
                 onClick={() => setEditModal(null)}
                 style={{
@@ -2132,11 +2327,13 @@ export default function App() {
                   padding: "10px 16px",
                   fontSize: 18,
                   fontWeight: 900,
+                  cursor: "pointer",
                 }}
               >
                 ✕
               </button>
             </div>
+
             <div style={{ marginBottom: 20 }}>
               <button
                 onClick={() => setIconPicker(!iconPicker)}
@@ -2151,6 +2348,7 @@ export default function App() {
               >
                 {form.icon || "🎯"}
               </button>
+
               {iconPicker && (
                 <div
                   style={{
@@ -2187,6 +2385,7 @@ export default function App() {
                 </div>
               )}
             </div>
+
             <div
               style={{
                 display: "grid",
@@ -2207,6 +2406,7 @@ export default function App() {
                 >
                   Título *
                 </label>
+
                 <input
                   value={form.title || ""}
                   onChange={(e) =>
@@ -2215,6 +2415,7 @@ export default function App() {
                   style={inp}
                 />
               </div>
+
               <div>
                 <label
                   style={{
@@ -2227,6 +2428,7 @@ export default function App() {
                 >
                   Hora
                 </label>
+
                 <input
                   value={form.time || ""}
                   onChange={(e) =>
@@ -2237,6 +2439,7 @@ export default function App() {
                 />
               </div>
             </div>
+
             <div style={{ marginBottom: 16 }}>
               <label
                 style={{
@@ -2249,6 +2452,7 @@ export default function App() {
               >
                 Descripción
               </label>
+
               <textarea
                 value={form.desc || ""}
                 onChange={(e) =>
@@ -2257,6 +2461,7 @@ export default function App() {
                 style={{ ...inp, minHeight: 100, resize: "vertical" }}
               />
             </div>
+
             <div
               style={{
                 display: "grid",
@@ -2277,15 +2482,17 @@ export default function App() {
                 >
                   Presupuesto (€)
                 </label>
+
                 <input
                   type="number"
-                  value={form.budget || ""}
+                  value={form.budget ?? ""}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, budget: e.target.value }))
                   }
                   style={inp}
                 />
               </div>
+
               <div>
                 <label
                   style={{
@@ -2298,6 +2505,7 @@ export default function App() {
                 >
                   Categoría
                 </label>
+
                 <select
                   value={form.category || "activity"}
                   onChange={(e) =>
@@ -2312,6 +2520,30 @@ export default function App() {
                 </select>
               </div>
             </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label
+                style={{
+                  fontSize: 15,
+                  color: "#6b7280",
+                  fontWeight: 800,
+                  marginBottom: 6,
+                  display: "block",
+                }}
+              >
+                Dirección (se abrirá en Maps)
+              </label>
+
+              <input
+                value={form.address || ""}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, address: e.target.value }))
+                }
+                style={inp}
+                placeholder="Dirección exacta o lugar"
+              />
+            </div>
+
             <div style={{ marginBottom: 24 }}>
               <label
                 style={{
@@ -2322,17 +2554,19 @@ export default function App() {
                   display: "block",
                 }}
               >
-                Dirección (Se abrirá en Maps)
+                Enlace externo opcional
               </label>
+
               <input
-                value={form.address || ""}
+                value={form.link || ""}
                 onChange={(e) =>
-                  setForm((f) => ({ ...f, address: e.target.value }))
+                  setForm((f) => ({ ...f, link: e.target.value }))
                 }
                 style={inp}
-                placeholder="Dirección exacta o lugar"
+                placeholder="https://..."
               />
             </div>
+
             <button
               onClick={saveAct}
               style={{
@@ -2347,13 +2581,12 @@ export default function App() {
                 cursor: "pointer",
               }}
             >
-              Guardar Cambios
+              Guardar cambios
             </button>
           </div>
         </div>
       )}
 
-      {/* CONFIRMAR BORRADO */}
       {delConfirm && (
         <div
           style={{
@@ -2382,9 +2615,11 @@ export default function App() {
             <h3 style={{ margin: "0 0 12px", fontSize: 22, fontWeight: 900 }}>
               ¿Eliminar actividad?
             </h3>
+
             <p style={{ color: "#4b5563", fontSize: 16, margin: "0 0 24px" }}>
               Esto no se puede deshacer.
             </p>
+
             <div style={{ display: "flex", gap: 12 }}>
               <button
                 onClick={() => setDelConfirm(null)}
@@ -2402,6 +2637,7 @@ export default function App() {
               >
                 Cancelar
               </button>
+
               <button
                 onClick={() => delAct(delConfirm.di, delConfirm.ai)}
                 style={{
@@ -2425,11 +2661,35 @@ export default function App() {
 
       <style>{`
         @media print {
-          body { background: white !important; margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .hide-on-print, .app-header-nav, .day-selector-nav { display: none !important; }
-          .print-only-header { display: block !important; }
-          .show-on-export { display: block !important; color: #4b5563; font-size: 15px; font-weight: 800; margin-top: 6px; }
-          @page { margin: 1.5cm; }
+          body {
+            background: white !important;
+            margin: 0;
+            padding: 0;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+
+          .hide-on-print,
+          .app-header-nav,
+          .day-selector-nav {
+            display: none !important;
+          }
+
+          .print-only-header {
+            display: block !important;
+          }
+
+          .show-on-export {
+            display: block !important;
+            color: #4b5563;
+            font-size: 15px;
+            font-weight: 800;
+            margin-top: 6px;
+          }
+
+          @page {
+            margin: 1.5cm;
+          }
         }
       `}</style>
     </div>
