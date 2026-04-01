@@ -15,8 +15,8 @@ const firebaseConfig = {
   measurementId: "G-DBRNDPWLPB",
 };
 
-// 👇 TU NUEVA CLAVE DE GEMINI (OCULTA EN LA CAJA FUERTE) 👇
-const AI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
+// 👇 TU CLAVE DE NVIDIA (OCULTA EN LA CAJA FUERTE) 👇
+const AI_API_KEY = process.env.REACT_APP_NVIDIA_API_KEY;
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
@@ -789,14 +789,15 @@ export default function App() {
     setUploading(null);
   };
 
-  // 👇 API OFICIAL ESTÁNDAR DE GOOGLE MAPS (Abre App o Navegador) 👇
+  // 👇 ENLACES OFICIALES Y DEFINITIVOS DE GOOGLE MAPS 👇
   const openSuperMap = () => {
     const acts = data.dias[sel].activities.filter((a) => a.address);
     if (acts.length === 0)
       return alert("No hay actividades con dirección guardada hoy.");
       
     if (acts.length === 1) {
-      const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(acts[0].address)}`;
+      const dest = encodeURIComponent(acts[0].address);
+      const url = `https://www.google.com/maps/search/?api=1&query=${dest}`;
       return window.open(url, "_blank", "noopener,noreferrer");
     }
     
@@ -805,7 +806,7 @@ export default function App() {
     const waypoints = acts
       .slice(1, -1)
       .map((a) => encodeURIComponent(a.address))
-      .join("%7C"); // %7C es el separador "|" oficial de Google Maps
+      .join("%7C"); // %7C es el separador oficial "|" para rutas
       
     const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
     window.open(url, "_blank", "noopener,noreferrer");
@@ -832,43 +833,53 @@ export default function App() {
     });
   };
 
-  // 👇 LLAMADA A GEMINI 1.5 (NUEVA CLAVE) 👇
+  // 👇 LLAMADA A LA API DE NVIDIA (NVIDIA NIM) 👇
   const fetchSugg = async () => {
-    if (!AI_API_KEY || AI_API_KEY === "FALTA_CLAVE_IA")
-      return alert("¡La clave de IA no se ha cargado correctamente en CodeSandbox o Vercel!");
+    if (!AI_API_KEY) {
+      return alert("¡Falta la clave de NVIDIA en las variables de entorno!");
+    }
     
     setAiLoading(true);
     setSugg(null);
     const d = data.dias[sel];
     const list = d.activities.map((a) => `${a.time}: ${a.title}`).join("; ");
+    
     try {
       const prompt = `Viaje familiar (2 adultos, adolescentes 16 y niño 9) a ${
         d.city
-      }. Agenda: ${
+      }. Agenda actual: ${
         list || "nada"
-      }. Sugiere 3 planes y 2 restaurantes familiares baratos. Responde SOLO en JSON válido sin markdown: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
+      }. Sugiere 3 planes y 2 restaurantes familiares baratos que encajen. Responde SOLO en JSON válido con esta estructura exacta sin texto extra: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
       
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${AI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-        }
-      );
+      const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${AI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: "moonshotai/kimi-k2.5", // 👈 El modelo que sale en tu captura de NVIDIA
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.7,
+          max_tokens: 1024
+        }),
+      });
+      
       const jsonStr = await res.json();
       
-      if (jsonStr.error) {
-         console.error("Error de Gemini:", jsonStr.error);
+      if (jsonStr.error || !jsonStr.choices) {
+         console.error("Error de NVIDIA:", jsonStr);
          setSugg({ error: true });
          setAiLoading(false);
          return;
       }
       
-      const content = jsonStr.candidates[0].content.parts[0].text;
+      const content = jsonStr.choices[0].message.content;
+      // Limpiamos los bloques de código (```json) por si acaso
       setSugg(JSON.parse(content.replace(/```json|```/g, "").trim()));
+      
     } catch (err) {
-      console.error("Error en fetchSugg:", err);
+      console.error("Error en fetchSugg (Nvidia):", err);
       setSugg({ error: true });
     }
     setAiLoading(false);
@@ -1451,7 +1462,7 @@ export default function App() {
 
                         {a.address && (
                           <div style={{ marginBottom: 14 }}>
-                            {/* 👇 ENLACES ESTÁNDAR PARA LA DIRECCIÓN INDIVIDUAL 👇 */}
+                            {/* 👇 ENLACE OFICIAL GOOGLE MAPS 👇 */}
                             <a
                               data-html2canvas-ignore="true"
                               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.address)}`}
