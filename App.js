@@ -789,7 +789,7 @@ export default function App() {
     setUploading(null);
   };
 
-  // 👇 FUNCIÓN CORREGIDA CON LOS ENLACES OFICIALES DE GOOGLE MAPS 👇
+  // 👇 ENLACES DE MAPAS CORREGIDOS CON LAS RUTAS OFICIALES 👇
   const openSuperMap = () => {
     const acts = data.dias[sel].activities.filter((a) => a.address);
     if (acts.length === 0)
@@ -797,7 +797,7 @@ export default function App() {
       
     if (acts.length === 1) {
       const dest = encodeURIComponent(acts[0].address);
-      const url = `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
+      const url = `https://www.google.com/maps/search/?api=1&query=${dest}`;
       return window.open(url, "_blank", "noopener,noreferrer");
     }
     
