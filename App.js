@@ -15,8 +15,8 @@ const firebaseConfig = {
   measurementId: "G-DBRNDPWLPB",
 };
 
-// 👇 TU CLAVE DE NVIDIA (OCULTA EN LA CAJA FUERTE) 👇
-const AI_API_KEY = "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";
+// 👇 PEGA AQUÍ TU NUEVA CLAVE DE GEMINI (ENTRE LAS COMILLAS) 👇
+const AI_API_KEY = "AIzaSyC9k6-Lf7lVZujVSYXNYBhGoApp-gyf-sQ";
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
@@ -789,7 +789,7 @@ export default function App() {
     setUploading(null);
   };
 
-  // 👇 ENLACES OFICIALES Y DEFINITIVOS DE GOOGLE MAPS 👇
+  // 👇 ENLACES DE GOOGLE MAPS OFICIALES 👇
   const openSuperMap = () => {
     const acts = data.dias[sel].activities.filter((a) => a.address);
     if (acts.length === 0)
@@ -806,7 +806,7 @@ export default function App() {
     const waypoints = acts
       .slice(1, -1)
       .map((a) => encodeURIComponent(a.address))
-      .join("%7C"); // %7C es el separador oficial "|" para rutas
+      .join("%7C");
       
     const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
     window.open(url, "_blank", "noopener,noreferrer");
@@ -833,10 +833,10 @@ export default function App() {
     });
   };
 
-  // 👇 LLAMADA A LA API DE NVIDIA (NVIDIA NIM) 👇
+  // 👇 CONEXIÓN A GEMINI CON CLAVE VISIBLE 👇
   const fetchSugg = async () => {
-    if (!AI_API_KEY) {
-      return alert("¡Falta la clave de NVIDIA en las variables de entorno!");
+    if (!AI_API_KEY || AI_API_KEY === "PON_AQUI_TU_NUEVA_CLAVE_DE_GEMINI") {
+      return alert("¡No has puesto tu clave de Gemini en la línea 19 del código!");
     }
     
     setAiLoading(true);
@@ -847,39 +847,31 @@ export default function App() {
     try {
       const prompt = `Viaje familiar (2 adultos, adolescentes 16 y niño 9) a ${
         d.city
-      }. Agenda actual: ${
+      }. Agenda: ${
         list || "nada"
-      }. Sugiere 3 planes y 2 restaurantes familiares baratos que encajen. Responde SOLO en JSON válido con esta estructura exacta sin texto extra: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
+      }. Sugiere 3 planes y 2 restaurantes familiares baratos. Responde SOLO en JSON válido sin markdown: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
       
-      const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${AI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "moonshotai/kimi-k2.5", // 👈 El modelo que sale en tu captura de NVIDIA
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.7,
-          max_tokens: 1024
-        }),
-      });
-      
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${AI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+        }
+      );
       const jsonStr = await res.json();
       
-      if (jsonStr.error || !jsonStr.choices) {
-         console.error("Error de NVIDIA:", jsonStr);
+      if (jsonStr.error) {
+         console.error("Error de Gemini:", jsonStr.error);
          setSugg({ error: true });
          setAiLoading(false);
          return;
       }
       
-      const content = jsonStr.choices[0].message.content;
-      // Limpiamos los bloques de código (```json) por si acaso
+      const content = jsonStr.candidates[0].content.parts[0].text;
       setSugg(JSON.parse(content.replace(/```json|```/g, "").trim()));
-      
     } catch (err) {
-      console.error("Error en fetchSugg (Nvidia):", err);
+      console.error("Error en fetchSugg:", err);
       setSugg({ error: true });
     }
     setAiLoading(false);
@@ -1462,7 +1454,6 @@ export default function App() {
 
                         {a.address && (
                           <div style={{ marginBottom: 14 }}>
-                            {/* 👇 ENLACE OFICIAL GOOGLE MAPS 👇 */}
                             <a
                               data-html2canvas-ignore="true"
                               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.address)}`}
