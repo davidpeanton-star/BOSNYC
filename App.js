@@ -24,62 +24,13 @@ const storage = getStorage(app);
 const TRIP_DOC = doc(db, "viajes", "boston_ny_2025");
 
 const ICONS = [
-  "🏨",
-  "✈️",
-  "🚗",
-  "🗺️",
-  "🍽️",
-  "🍕",
-  "🦞",
-  "🏀",
-  "🗽",
-  "🔭",
-  "🎓",
-  "🌳",
-  "🌊",
-  "🎭",
-  "🛒",
-  "🌅",
-  "🏛️",
-  "🚶",
-  "🛍️",
-  "🎨",
-  "🌃",
-  "🌉",
-  "🏙️",
-  "📸",
-  "🥩",
-  "☕",
-  "🎵",
-  "🎬",
-  "🏆",
-  "🚇",
-  "🎉",
-  "🌆",
-  "🍣",
-  "🎪",
-  "⛵",
-  "🏟️",
-  "🌇",
-  "🍜",
-  "🥗",
-  "🖼️",
-  "🎠",
-  "🍦",
-  "🎡",
-  "🧁",
-  "🥐",
-  "⚾",
-  "🦁",
-  "🍺",
-  "🚢",
-  "🎻",
-  "🌮",
-  "🔬",
-  "🏡",
-  "🌉",
-  "🎯",
+  "🏨", "✈️", "🚗", "🗺️", "🍽️", "🍕", "🦞", "🏀", "🗽", "🔭", "🎓", "🌳",
+  "🌊", "🎭", "🛒", "🌅", "🏛️", "🚶", "🛍️", "🎨", "🌃", "🌉", "🏙️", "📸",
+  "🥩", "☕", "🎵", "🎬", "🏆", "🚇", "🎉", "🌆", "🍣", "🎪", "⛵", "🏟️",
+  "🌇", "🍜", "🥗", "🖼️", "🎠", "🍦", "🎡", "🧁", "🥐", "⚾", "🦁", "🍺",
+  "🚢", "🎻", "🌮", "🔬", "🏡", "🌉", "🎯",
 ];
+
 const CAT = {
   activity: { label: "Actividad", bg: "#e8f4fd", col: "#1a73e8" },
   restaurant: { label: "Restaurante", bg: "#fef6e4", col: "#e67e22" },
@@ -713,27 +664,10 @@ export default function App() {
         );
         const dataNY = await resNY.json();
         const WMO = {
-          0: "☀️",
-          1: "🌤️",
-          2: "⛅",
-          3: "☁️",
-          45: "🌫️",
-          48: "🌫️",
-          51: "🌧️",
-          53: "🌧️",
-          55: "🌧️",
-          61: "☔",
-          63: "☔",
-          65: "☔",
-          71: "🌨️",
-          73: "🌨️",
-          75: "🌨️",
-          80: "🌦️",
-          81: "🌦️",
-          82: "🌦️",
-          95: "⛈️",
-          96: "⛈️",
-          99: "⛈️",
+          0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️", 45: "🌫️", 48: "🌫️", 51: "🌧️",
+          53: "🌧️", 55: "🌧️", 61: "☔", 63: "☔", 65: "☔", 71: "🌨️",
+          73: "🌨️", 75: "🌨️", 80: "🌦️", 81: "🌦️", 82: "🌦️", 95: "⛈️",
+          96: "⛈️", 99: "⛈️",
         };
         const wMap = {};
         const process = (d, prefix) =>
@@ -779,6 +713,7 @@ export default function App() {
     setEditModal({ di: sel, ai: -1 });
     setIconPicker(false);
   };
+  
   const openEdit = (di, ai) => {
     setForm({ ...data.dias[di].activities[ai] });
     setEditModal({ di, ai });
@@ -854,31 +789,26 @@ export default function App() {
     setUploading(null);
   };
 
+  // 👇 FUNCIÓN CORREGIDA CON LOS ENLACES OFICIALES DE GOOGLE MAPS 👇
   const openSuperMap = () => {
     const acts = data.dias[sel].activities.filter((a) => a.address);
     if (acts.length === 0)
       return alert("No hay actividades con dirección guardada hoy.");
+      
     if (acts.length === 1) {
       const dest = encodeURIComponent(acts[0].address);
-      const url =
-        "https://www.google.com/maps/embed?pb=!1m12!1m8!1m12!1m3!1d1511216.7454228394!2d-72.5!3d41.5!3m2!1i1024!2i768!4f13.1!2m1!1spoints+of+interest!5e0!3m2!1sen!2sus!4v17100000000002" +
-        dest;
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
       return window.open(url, "_blank", "noopener,noreferrer");
     }
+    
     const origin = encodeURIComponent(acts[0].address);
     const dest = encodeURIComponent(acts[acts.length - 1].address);
     const waypoints = acts
       .slice(1, -1)
       .map((a) => encodeURIComponent(a.address))
       .join("|");
-    const url =
-      "https://www.google.com/maps/embed?pb=!1m12!1m8!1m12!1m3!1d1511216.7454228394!2d-72.5!3d41.5!3m2!1i1024!2i768!4f13.1!2m1!1spoints+of+interest!5e0!3m2!1sen!2sus!4v17100000000003" +
-      origin +
-      "&destination=" +
-      dest +
-      "&waypoints=" +
-      waypoints +
-      "&travelmode=walking";
+      
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -1517,12 +1447,10 @@ export default function App() {
 
                         {a.address && (
                           <div style={{ marginBottom: 14 }}>
+                            {/* 👇 ENLACE CORREGIDO PARA ABRIR LA APP DE MAPS 👇 */}
                             <a
                               data-html2canvas-ignore="true"
-                              href={
-                                "https://www.google.com/maps/embed?pb=!1m12!1m8!1m12!1m3!1d1511216.7454228394!2d-72.5!3d41.5!3m2!1i1024!2i768!4f13.1!2m1!1spoints+of+interest!5e0!3m2!1sen!2sus!4v17100000000004" +
-                                encodeURIComponent(a.address)
-                              }
+                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.address)}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               style={{
