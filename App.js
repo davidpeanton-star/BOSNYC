@@ -16,7 +16,7 @@ const firebaseConfig = {
 };
 
 // 👇 TU CLAVE DE NVIDIA (OCULTA EN LA CAJA FUERTE) 👇
-const AI_API_KEY = process.env.REACT_APP_NVIDIA_API_KEY;
+const AI_API_KEY = "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";
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
