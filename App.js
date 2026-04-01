@@ -6,7 +6,7 @@ import html2canvas from "html2canvas";
 
 // 👇 TUS DATOS DE FIREBASE CONFIGURADOS 👇
 const firebaseConfig = {
- 
+ const AI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
   authDomain: "viaje-usa-54b2f.firebaseapp.com",
   projectId: "viaje-usa-54b2f",
   storageBucket: "viaje-usa-54b2f.firebasestorage.app",
