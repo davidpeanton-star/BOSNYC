@@ -789,7 +789,7 @@ export default function App() {
     setUploading(null);
   };
 
-  // 👇 AHORA SÍ: ENLACES OFICIALES DE GOOGLE MAPS 👇
+  // 👇 API OFICIAL ESTABLE DE GOOGLE MAPS 👇
   const openSuperMap = () => {
     const acts = data.dias[sel].activities.filter((a) => a.address);
     if (acts.length === 0)
@@ -1447,7 +1447,7 @@ export default function App() {
 
                         {a.address && (
                           <div style={{ marginBottom: 14 }}>
-                            {/* 👇 AHORA SÍ: ENLACE OFICIAL DE MAPS 👇 */}
+                            {/* 👇 AHORA SÍ: ENLACE OFICIAL DE MAPAS 👇 */}
                             <a
                               data-html2canvas-ignore="true"
                               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.address)}`}
