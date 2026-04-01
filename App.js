@@ -6,7 +6,7 @@ import html2canvas from "html2canvas";
 
 // 👇 TUS DATOS DE FIREBASE CONFIGURADOS 👇
 const firebaseConfig = {
-  apiKey: "AIzaSyDfjxzkymYvxK6Dtuu_OTAHB3Cj3Z8iRlk",
+ 
   authDomain: "viaje-usa-54b2f.firebaseapp.com",
   projectId: "viaje-usa-54b2f",
   storageBucket: "viaje-usa-54b2f.firebasestorage.app",
