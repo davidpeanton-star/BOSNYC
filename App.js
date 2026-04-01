@@ -797,7 +797,7 @@ export default function App() {
       
     if (acts.length === 1) {
       const dest = encodeURIComponent(acts[0].address);
-      const url = `https://www.google.com/maps/search/?api=1&query=${dest}`;
+      const url = `https://www.google.com/maps/search/?api=1&query=$${dest}`;
       return window.open(url, "_blank", "noopener,noreferrer");
     }
     
@@ -808,7 +808,7 @@ export default function App() {
       .map((a) => encodeURIComponent(a.address))
       .join("%7C"); // %7C es la barra vertical | en formato URL oficial
       
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
+    const url = `https://www.google.com/maps/dir/?api=1&origin=$${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -835,9 +835,11 @@ export default function App() {
     });
   };
 
+  // 👇 LLAMADA A LA IA CORREGIDA (VERSIÓN 1.5 ESTABLE) 👇
   const fetchSugg = async () => {
     if (!AI_API_KEY || AI_API_KEY === "FALTA_CLAVE_IA")
       return alert("¡La clave de IA no se ha cargado correctamente desde Vercel!");
+    
     setAiLoading(true);
     setSugg(null);
     const d = data.dias[sel];
@@ -848,8 +850,9 @@ export default function App() {
       }. Agenda: ${
         list || "nada"
       }. Sugiere 3 planes y 2 restaurantes familiares baratos. Responde SOLO en JSON válido sin markdown: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
+      
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${AI_API_KEY}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1450,7 +1453,7 @@ export default function App() {
                             {/* 👇 AHORA SÍ: ENLACE OFICIAL DE MAPAS 👇 */}
                             <a
                               data-html2canvas-ignore="true"
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.address)}`}
+                              href={`https://www.google.com/maps/search/?api=1&query=$${encodeURIComponent(a.address)}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               style={{
