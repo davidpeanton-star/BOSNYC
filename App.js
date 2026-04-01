@@ -806,7 +806,7 @@ export default function App() {
     const waypoints = acts
       .slice(1, -1)
       .map((a) => encodeURIComponent(a.address))
-      .join("|");
+      .join("%7C"); // Usamos %7C que es el código URL oficial para el separador "|"
       
     const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
     window.open(url, "_blank", "noopener,noreferrer");
