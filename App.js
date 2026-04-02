@@ -22,7 +22,7 @@ const GROQ_MODEL = "llama-3.3-70b-versatile";
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const storage = getStorage(app);
-const TRIP_DOC = doc(db, "viajes", "boston_ny_2025");
+const TRIP_DOC = doc(db, "viajes", "viaje_definitivo_2026");
 
 const ICONS = [
   "🏨",
@@ -124,7 +124,7 @@ const INIT_CHECKLIST = [
 
 const INIT_DAYS = [
   {
-    date: "Jue 3 Abril",
+    date: "Vie 3 Abril",
     city: "Boston",
     emoji: "✈️",
     label: "Llegada a Boston",
@@ -169,7 +169,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Vie 4 Abril",
+    date: "Sáb 4 Abril",
     city: "Boston",
     emoji: "🏛️",
     label: "Boston histórico",
@@ -226,7 +226,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Sáb 5 Abril",
+    date: "Dom 5 Abril",
     city: "Boston",
     emoji: "🏀",
     label: "Boston libre + ¡Celtics!",
@@ -283,7 +283,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Dom 6 Abril",
+    date: "Lun 6 Abril",
     city: "Boston → New York",
     emoji: "🚗",
     label: "Road Trip a NYC",
@@ -340,7 +340,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Lun 7 Abril",
+    date: "Mar 7 Abril",
     city: "New York",
     emoji: "🗽",
     label: "Estatua de la Libertad",
@@ -397,7 +397,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Mar 8 Abril",
+    date: "Mié 8 Abril",
     city: "New York",
     emoji: "🏙️",
     label: "El Bronx + Summit",
@@ -442,7 +442,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Mié 9 Abril",
+    date: "Jue 9 Abril",
     city: "New York",
     emoji: "🎭",
     label: "Central Park & Cultura",
@@ -487,7 +487,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Jue 10 Abril",
+    date: "Vie 10 Abril",
     city: "New York",
     emoji: "🌆",
     label: "Manhattan Norte & Sur",
@@ -532,7 +532,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Vie 11 Abril",
+    date: "Sáb 11 Abril",
     city: "Boston ✈️",
     emoji: "✈️",
     label: "Vuelta a casa ⚠️",
@@ -926,9 +926,10 @@ export default function App() {
       messages: [
         {
           role: "system",
-          content: "Eres un asistente de viajes experto. Responde SIEMPRE con JSON puro, sin markdown, sin backticks, sin texto adicional."
+          content:
+            "Eres un asistente de viajes experto. Responde SIEMPRE con JSON puro, sin markdown, sin backticks, sin texto adicional.",
         },
-        { role: "user", content: prompt }
+        { role: "user", content: prompt },
       ],
       temperature: 0.7,
       max_tokens: 1500,
@@ -941,8 +942,13 @@ export default function App() {
 
       try {
         if (attempt > 0) {
-          const waitMs = Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 1000;
-          setAiStatus(`⏳ Reintentando (${attempt}/${maxRetries})... espera ${Math.ceil(waitMs / 1000)}s`);
+          const waitMs =
+            Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 1000;
+          setAiStatus(
+            `⏳ Reintentando (${attempt}/${maxRetries})... espera ${Math.ceil(
+              waitMs / 1000
+            )}s`
+          );
           await new Promise((r) => setTimeout(r, waitMs));
         } else {
           setAiStatus("🔗 Conectando con Groq IA...");
@@ -952,7 +958,7 @@ export default function App() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${GROQ_API_KEY}`,
+            Authorization: `Bearer ${GROQ_API_KEY}`,
           },
           body,
           signal: controller.signal,
@@ -962,7 +968,9 @@ export default function App() {
 
         // Si es 429 (rate limit) y quedan reintentos, esperar y reintentar
         if (res.status === 429 && attempt < maxRetries) {
-          console.warn(`Groq 429 rate limit, reintento ${attempt + 1}/${maxRetries}`);
+          console.warn(
+            `Groq 429 rate limit, reintento ${attempt + 1}/${maxRetries}`
+          );
           continue;
         }
 
@@ -1039,7 +1047,7 @@ export default function App() {
     const messages = {
       RATE_LIMIT: {
         title: "⏱️ Demasiadas solicitudes",
-        desc: "La API de Groq tiene un límite de peticiones. Espera 30 segundos y pulsa \"Nuevas ideas\".",
+        desc: 'La API de Groq tiene un límite de peticiones. Espera 30 segundos y pulsa "Nuevas ideas".',
         canRetry: true,
       },
       API_KEY_INVALID: {
@@ -1084,7 +1092,7 @@ export default function App() {
       },
       PARSE_ERROR: {
         title: "🔄 Error al leer sugerencias",
-        desc: "La IA devolvió un formato inesperado. Pulsa \"Nuevas ideas\" para reintentar.",
+        desc: 'La IA devolvió un formato inesperado. Pulsa "Nuevas ideas" para reintentar.',
         canRetry: true,
       },
       MAX_RETRIES: {
@@ -1093,11 +1101,13 @@ export default function App() {
         canRetry: true,
       },
     };
-    return messages[code] || {
-      title: "⚠️ Error inesperado",
-      desc: `Algo salió mal (${code}). Inténtalo de nuevo.`,
-      canRetry: true,
-    };
+    return (
+      messages[code] || {
+        title: "⚠️ Error inesperado",
+        desc: `Algo salió mal (${code}). Inténtalo de nuevo.`,
+        canRetry: true,
+      }
+    );
   };
 
   const fetchSugg = async (forceRefresh = false) => {
@@ -1131,7 +1141,11 @@ export default function App() {
     const list = d.activities.map((a) => `${a.time}: ${a.title}`).join("; ");
 
     try {
-      const prompt = `Viaje familiar (2 adultos, adolescente de 16 y niño de 9) a ${d.city} el ${d.date}. Agenda actual: ${list || "nada"}. Sugiere 3 actividades y 2 restaurantes familiares económicos que NO estén ya en la agenda. Responde SOLO con JSON puro sin markdown ni backticks: {"activities":[{"icon":"emoji","title":"nombre","time":"hora sugerida","desc":"descripción breve de 1 línea","budget":numero_en_euros,"address":"dirección real","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre real","time":"hora sugerida","desc":"descripción breve","budget":numero_en_euros,"address":"dirección real","link":""}]}`;
+      const prompt = `Viaje familiar (2 adultos, adolescente de 16 y niño de 9) a ${
+        d.city
+      } el ${d.date}. Agenda actual: ${
+        list || "nada"
+      }. Sugiere 3 actividades y 2 restaurantes familiares económicos que NO estén ya en la agenda. Responde SOLO con JSON puro sin markdown ni backticks: {"activities":[{"icon":"emoji","title":"nombre","time":"hora sugerida","desc":"descripción breve de 1 línea","budget":numero_en_euros,"address":"dirección real","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre real","time":"hora sugerida","desc":"descripción breve","budget":numero_en_euros,"address":"dirección real","link":""}]}`;
 
       const rawText = await callGroqWithRetry(prompt);
 
@@ -1154,7 +1168,12 @@ export default function App() {
       try {
         parsed = JSON.parse(cleaned);
       } catch (parseErr) {
-        console.error("Error parsing JSON de Groq:", parseErr, "\nTexto recibido:", rawText.substring(0, 500));
+        console.error(
+          "Error parsing JSON de Groq:",
+          parseErr,
+          "\nTexto recibido:",
+          rawText.substring(0, 500)
+        );
         throw new Error("PARSE_ERROR");
       }
 
@@ -1165,8 +1184,12 @@ export default function App() {
       }
 
       // Normalizar: asegurar que activities y restaurants sean arrays
-      parsed.activities = Array.isArray(parsed.activities) ? parsed.activities : [];
-      parsed.restaurants = Array.isArray(parsed.restaurants) ? parsed.restaurants : [];
+      parsed.activities = Array.isArray(parsed.activities)
+        ? parsed.activities
+        : [];
+      parsed.restaurants = Array.isArray(parsed.restaurants)
+        ? parsed.restaurants
+        : [];
 
       // Limpiar valores de budget por si vienen como string
       [...parsed.activities, ...parsed.restaurants].forEach((item) => {
@@ -2151,10 +2174,24 @@ export default function App() {
               }}
             >
               <div>
-                <h3 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 900, color: "#111827" }}>
+                <h3
+                  style={{
+                    margin: "0 0 4px",
+                    fontSize: 20,
+                    fontWeight: 900,
+                    color: "#111827",
+                  }}
+                >
                   ✨ Ideas para {day.city}
                 </h3>
-                <p style={{ margin: 0, fontSize: 14, color: "#6b7280", fontWeight: 600 }}>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: 14,
+                    color: "#6b7280",
+                    fontWeight: 600,
+                  }}
+                >
                   Sugerencias personalizadas por IA
                 </p>
               </div>
@@ -2194,11 +2231,28 @@ export default function App() {
                   border: "2px solid #bfdbfe",
                 }}
               >
-                <div style={{ fontSize: 40, marginBottom: 12, animation: "pulse 1.5s infinite" }}>🧠</div>
-                <div style={{ fontSize: 17, fontWeight: 800, color: "#1e40af", marginBottom: 8 }}>
+                <div
+                  style={{
+                    fontSize: 40,
+                    marginBottom: 12,
+                    animation: "pulse 1.5s infinite",
+                  }}
+                >
+                  🧠
+                </div>
+                <div
+                  style={{
+                    fontSize: 17,
+                    fontWeight: 800,
+                    color: "#1e40af",
+                    marginBottom: 8,
+                  }}
+                >
                   Generando ideas...
                 </div>
-                <div style={{ fontSize: 15, color: "#3b82f6", fontWeight: 600 }}>
+                <div
+                  style={{ fontSize: 15, color: "#3b82f6", fontWeight: 600 }}
+                >
                   {aiStatus || "Conectando con Groq IA..."}
                 </div>
                 <div
@@ -2231,13 +2285,29 @@ export default function App() {
                   padding: "20px 24px",
                   marginBottom: 16,
                   marginTop: 14,
-                  border: `2px solid ${aiError.canRetry ? "#fecaca" : "#fde68a"}`,
+                  border: `2px solid ${
+                    aiError.canRetry ? "#fecaca" : "#fde68a"
+                  }`,
                 }}
               >
-                <div style={{ fontSize: 18, fontWeight: 900, color: aiError.canRetry ? "#991b1b" : "#92400e", marginBottom: 8 }}>
+                <div
+                  style={{
+                    fontSize: 18,
+                    fontWeight: 900,
+                    color: aiError.canRetry ? "#991b1b" : "#92400e",
+                    marginBottom: 8,
+                  }}
+                >
                   {aiError.title}
                 </div>
-                <p style={{ margin: "0 0 14px", fontSize: 15, color: "#6b7280", lineHeight: 1.5 }}>
+                <p
+                  style={{
+                    margin: "0 0 14px",
+                    fontSize: 15,
+                    color: "#6b7280",
+                    lineHeight: 1.5,
+                  }}
+                >
                   {aiError.desc}
                 </p>
                 {aiError.canRetry && (
@@ -2264,7 +2334,14 @@ export default function App() {
             {/* Sugerencias de actividades */}
             {sugg?.activities?.length > 0 && (
               <div style={{ marginTop: 14 }}>
-                <h4 style={{ margin: "0 0 12px", fontSize: 17, fontWeight: 900, color: "#374151" }}>
+                <h4
+                  style={{
+                    margin: "0 0 12px",
+                    fontSize: 17,
+                    fontWeight: 900,
+                    color: "#374151",
+                  }}
+                >
                   🎯 Actividades sugeridas
                 </h4>
                 {sugg.activities.map((a, i) => (
@@ -2274,7 +2351,12 @@ export default function App() {
                     col={col}
                     onAdd={() => {
                       const nDias = [...data.dias];
-                      nDias[sel].activities.push({ ...a, category: "activity", done: false, confirmed: false });
+                      nDias[sel].activities.push({
+                        ...a,
+                        category: "activity",
+                        done: false,
+                        confirmed: false,
+                      });
                       persist({ ...data, dias: nDias });
                     }}
                   />
@@ -2285,7 +2367,14 @@ export default function App() {
             {/* Sugerencias de restaurantes */}
             {sugg?.restaurants?.length > 0 && (
               <div style={{ marginTop: 14 }}>
-                <h4 style={{ margin: "0 0 12px", fontSize: 17, fontWeight: 900, color: "#374151" }}>
+                <h4
+                  style={{
+                    margin: "0 0 12px",
+                    fontSize: 17,
+                    fontWeight: 900,
+                    color: "#374151",
+                  }}
+                >
                   🍽️ Restaurantes sugeridos
                 </h4>
                 {sugg.restaurants.map((r, i) => (
@@ -2295,7 +2384,12 @@ export default function App() {
                     col={col}
                     onAdd={() => {
                       const nDias = [...data.dias];
-                      nDias[sel].activities.push({ ...r, category: "restaurant", done: false, confirmed: false });
+                      nDias[sel].activities.push({
+                        ...r,
+                        category: "restaurant",
+                        done: false,
+                        confirmed: false,
+                      });
                       persist({ ...data, dias: nDias });
                     }}
                   />
@@ -2316,10 +2410,19 @@ export default function App() {
                 }}
               >
                 <div style={{ fontSize: 48, marginBottom: 12 }}>✨</div>
-                <p style={{ fontSize: 17, fontWeight: 800, color: "#374151", margin: "0 0 8px" }}>
+                <p
+                  style={{
+                    fontSize: 17,
+                    fontWeight: 800,
+                    color: "#374151",
+                    margin: "0 0 8px",
+                  }}
+                >
                   ¿Necesitas inspiración?
                 </p>
-                <p style={{ fontSize: 15, color: "#6b7280", margin: "0 0 20px" }}>
+                <p
+                  style={{ fontSize: 15, color: "#6b7280", margin: "0 0 20px" }}
+                >
                   Pulsa "Nuevas ideas" para que la IA te sugiera planes
                 </p>
                 <button
