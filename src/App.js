@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect } from "react";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore, doc, onSnapshot, setDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -15,74 +15,21 @@ const firebaseConfig = {
   measurementId: "G-DBRNDPWLPB",
 };
 
-// 👇 CLAVES DESDE .env (REACT_APP_ prefix requerido por Create React App) 👇
-const GROQ_API_KEY = process.env.REACT_APP_GROQ_API_KEY || "";
-const GROQ_MODEL = process.env.REACT_APP_GROQ_MODEL || "llama-3.3-70b-versatile";
-
-// Intervalo de actualización del clima (30 minutos en ms)
-const WEATHER_REFRESH_INTERVAL = 30 * 60 * 1000;
+// 👇 TU CLAVE DE GROQ OCULTA EN EL ARCHIVO .ENV 👇
+const GROQ_API_KEY = process.env.REACT_APP_GROQ_API_KEY;
+const GROQ_MODEL = "llama-3.3-70b-versatile";
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const storage = getStorage(app);
-const TRIP_DOC = doc(db, "viajes", "boston_ny_2025");
+const TRIP_DOC = doc(db, "viajes", "viaje_definitivo_2026");
 
 const ICONS = [
-  "🏨",
-  "✈️",
-  "🚗",
-  "🗺️",
-  "🍽️",
-  "🍕",
-  "🦞",
-  "🏀",
-  "🗽",
-  "🔭",
-  "🎓",
-  "🌳",
-  "🌊",
-  "🎭",
-  "🛒",
-  "🌅",
-  "🏛️",
-  "🚶",
-  "🛍️",
-  "🎨",
-  "🌃",
-  "🌉",
-  "🏙️",
-  "📸",
-  "🥩",
-  "☕",
-  "🎵",
-  "🎬",
-  "🏆",
-  "🚇",
-  "🎉",
-  "🌆",
-  "🍣",
-  "🎪",
-  "⛵",
-  "🏟️",
-  "🌇",
-  "🍜",
-  "🥗",
-  "🖼️",
-  "🎠",
-  "🍦",
-  "🎡",
-  "🧁",
-  "🥐",
-  "⚾",
-  "🦁",
-  "🍺",
-  "🚢",
-  "🎻",
-  "🌮",
-  "🔬",
-  "🏡",
-  "🌉",
-  "🎯",
+  "🏨", "✈️", "🚗", "🗺️", "🍽️", "🍕", "🦞", "🏀", "🗽", "🔭", "🎓", "🌳",
+  "🌊", "🎭", "🛒", "🌅", "🏛️", "🚶", "🛍️", "🎨", "🌃", "🌉", "🏙️", "📸",
+  "🥩", "☕", "🎵", "🎬", "🏆", "🚇", "🎉", "🌆", "🍣", "🎪", "⛵", "🏟️",
+  "🌇", "🍜", "🥗", "🖼️", "🎠", "🍦", "🎡", "🧁", "🥐", "⚾", "🦁", "🍺",
+  "🚢", "🎻", "🌮", "🔬", "🏡", "🌉", "🎯",
 ];
 
 const CAT = {
@@ -684,10 +631,6 @@ export default function App() {
   const [delConfirm, setDelConfirm] = useState(null);
   const [saveStatus, setSaveStatus] = useState("");
   const [weatherData, setWeatherData] = useState({});
-  const [weatherLastUpdated, setWeatherLastUpdated] = useState(null);
-  const [weatherRefreshing, setWeatherRefreshing] = useState(false);
-  const [weatherError, setWeatherError] = useState(null);
-  const weatherIntervalRef = useRef(null);
   const [uploading, setUploading] = useState(null);
   const [newCheckItem, setNewCheckItem] = useState("");
 
@@ -714,46 +657,43 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 🌤️ Función para obtener el clima con retry logic y manejo de errores
-  const fetchWeather = useCallback(async (isManual = false) => {
-    if (weatherRefreshing) return; // evitar llamadas simultáneas
-    setWeatherRefreshing(true);
-    if (isManual) setWeatherError(null);
-
-    const WMO = {
-      0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️",
-      45: "🌫️", 48: "🌫️",
-      51: "🌧️", 53: "🌧️", 55: "🌧️",
-      61: "☔", 63: "☔", 65: "☔",
-      71: "🌨️", 73: "🌨️", 75: "🌨️",
-      80: "🌦️", 81: "🌦️", 82: "🌦️",
-      95: "⛈️", 96: "⛈️", 99: "⛈️",
-    };
-
-    const maxRetries = 2;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  // ✅ EL TIEMPO: Refresco inicial y automático cada 30 minutos
+  useEffect(() => {
+    const fetchWeather = async () => {
       try {
-        if (attempt > 0) {
-          await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
-        }
-
-        const [resB, resNY] = await Promise.all([
-          fetch(
-            "https://api.open-meteo.com/v1/forecast?latitude=42.3601&longitude=-71.0589&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=America%2FNew_York&forecast_days=16"
-          ),
-          fetch(
-            "https://api.open-meteo.com/v1/forecast?latitude=40.7128&longitude=-74.0060&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=America%2FNew_York&forecast_days=16"
-          ),
-        ]);
-
-        if (!resB.ok || !resNY.ok) {
-          throw new Error(`HTTP error: Boston=${resB.status}, NY=${resNY.status}`);
-        }
-
-        const [dataB, dataNY] = await Promise.all([resB.json(), resNY.json()]);
-
+        const resB = await fetch(
+          "https://api.open-meteo.com/v1/forecast?latitude=42.3601&longitude=-71.0589&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=America%2FNew_York&forecast_days=16"
+        );
+        const dataB = await resB.json();
+        const resNY = await fetch(
+          "https://api.open-meteo.com/v1/forecast?latitude=40.7128&longitude=-74.0060&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=America%2FNew_York&forecast_days=16"
+        );
+        const dataNY = await resNY.json();
+        const WMO = {
+          0: "☀️",
+          1: "🌤️",
+          2: "⛅",
+          3: "☁️",
+          45: "🌫️",
+          48: "🌫️",
+          51: "🌧️",
+          53: "🌧️",
+          55: "🌧️",
+          61: "☔",
+          63: "☔",
+          65: "☔",
+          71: "🌨️",
+          73: "🌨️",
+          75: "🌨️",
+          80: "🌦️",
+          81: "🌦️",
+          82: "🌦️",
+          95: "⛈️",
+          96: "⛈️",
+          99: "⛈️",
+        };
         const wMap = {};
-        const processData = (d, prefix) =>
+        const process = (d, prefix) =>
           d.daily.time.forEach((dt, i) => {
             wMap[`${prefix}-${parseInt(dt.split("-")[2], 10)}`] = {
               icon: WMO[d.daily.weather_code[i]] || "🌤️",
@@ -761,52 +701,15 @@ export default function App() {
               min: Math.round(d.daily.temperature_2m_min[i]),
             };
           });
-        processData(dataB, "Boston");
-        processData(dataNY, "New York");
-
+        process(dataB, "Boston");
+        process(dataNY, "New York");
         setWeatherData(wMap);
-        setWeatherLastUpdated(new Date());
-        setWeatherError(null);
-        setWeatherRefreshing(false);
-        return; // éxito, salir del loop
-      } catch (e) {
-        console.warn(`Error clima (intento ${attempt + 1}/${maxRetries + 1}):`, e.message);
-        if (attempt === maxRetries) {
-          setWeatherError("No se pudo actualizar el clima. Se reintentará automáticamente.");
-          setWeatherRefreshing(false);
-        }
-      }
-    }
-  }, [weatherRefreshing]);
-
-  // 🔄 Auto-actualización del clima cada 30 minutos + visibilidad
-  useEffect(() => {
-    // Carga inicial
-    fetchWeather();
-
-    // Intervalo periódico
-    weatherIntervalRef.current = setInterval(() => {
-      if (!document.hidden) {
-        fetchWeather();
-      }
-    }, WEATHER_REFRESH_INTERVAL);
-
-    // Refrescar al volver a la pestaña si lleva más de 15 min
-    const handleVisibility = () => {
-      if (!document.hidden && weatherLastUpdated) {
-        const elapsed = Date.now() - weatherLastUpdated.getTime();
-        if (elapsed > WEATHER_REFRESH_INTERVAL / 2) {
-          fetchWeather();
-        }
-      }
+      } catch (e) {}
     };
-    document.addEventListener("visibilitychange", handleVisibility);
 
-    return () => {
-      if (weatherIntervalRef.current) clearInterval(weatherIntervalRef.current);
-      document.removeEventListener("visibilitychange", handleVisibility);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetchWeather(); // Llamada inicial
+    const weatherInterval = setInterval(fetchWeather, 30 * 60 * 1000); // Refresco cada 30 minutos
+    return () => clearInterval(weatherInterval); // Limpieza
   }, []);
 
   const persist = async (newData) => {
@@ -890,6 +793,13 @@ export default function App() {
     if (!data.checklist) return;
     const nCheck = [...data.checklist];
     nCheck[idx].done = !nCheck[idx].done;
+    persist({ ...data, checklist: nCheck });
+  };
+
+  // ✅ BORRADO EN MALETA
+  const delCheck = (idx) => {
+    if (!data.checklist) return;
+    const nCheck = data.checklist.filter((_, i) => i !== idx);
     persist({ ...data, checklist: nCheck });
   };
 
@@ -977,23 +887,28 @@ export default function App() {
       messages: [
         {
           role: "system",
-          content: "Eres un asistente de viajes experto. Responde SIEMPRE con JSON puro, sin markdown, sin backticks, sin texto adicional."
+          content:
+            "Eres un asistente de viajes experto. Responde SIEMPRE con JSON puro, sin markdown, sin backticks, sin texto adicional.",
         },
-        { role: "user", content: prompt }
+        { role: "user", content: prompt },
       ],
       temperature: 0.7,
       max_tokens: 1500,
     });
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      // AbortController con timeout de 25 segundos
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 25000);
 
       try {
         if (attempt > 0) {
-          const waitMs = Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 1000;
-          setAiStatus(`⏳ Reintentando (${attempt}/${maxRetries})... espera ${Math.ceil(waitMs / 1000)}s`);
+          const waitMs =
+            Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 1000;
+          setAiStatus(
+            `⏳ Reintentando (${attempt}/${maxRetries})... espera ${Math.ceil(
+              waitMs / 1000
+            )}s`
+          );
           await new Promise((r) => setTimeout(r, waitMs));
         } else {
           setAiStatus("🔗 Conectando con Groq IA...");
@@ -1003,7 +918,7 @@ export default function App() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${GROQ_API_KEY}`,
+            Authorization: `Bearer ${GROQ_API_KEY}`,
           },
           body,
           signal: controller.signal,
@@ -1011,13 +926,13 @@ export default function App() {
 
         clearTimeout(timeoutId);
 
-        // Si es 429 (rate limit) y quedan reintentos, esperar y reintentar
         if (res.status === 429 && attempt < maxRetries) {
-          console.warn(`Groq 429 rate limit, reintento ${attempt + 1}/${maxRetries}`);
+          console.warn(
+            `Groq 429 rate limit, reintento ${attempt + 1}/${maxRetries}`
+          );
           continue;
         }
 
-        // Errores HTTP específicos
         if (!res.ok) {
           const errorBody = await res.text().catch(() => "");
           if (res.status === 429) {
@@ -1025,13 +940,12 @@ export default function App() {
           } else if (res.status === 401) {
             throw new Error("API_KEY_INVALID");
           } else if (res.status === 400) {
-            // Comprobar si es un error de modelo deprecado
             if (errorBody.includes("decommissioned")) {
               throw new Error("MODEL_DEPRECATED");
             }
             throw new Error("BAD_REQUEST");
           } else if (res.status >= 500) {
-            if (attempt < maxRetries) continue; // reintentar errores del servidor
+            if (attempt < maxRetries) continue;
             throw new Error("SERVER_ERROR");
           } else {
             throw new Error(`HTTP_${res.status}`);
@@ -1045,7 +959,6 @@ export default function App() {
           throw new Error(jsonData.error.message || "GROQ_ERROR");
         }
 
-        // Verificar estructura OpenAI-compatible de Groq
         const content = jsonData.choices?.[0]?.message?.content;
         if (!content) {
           if (jsonData.choices?.[0]?.finish_reason === "content_filter") {
@@ -1063,7 +976,6 @@ export default function App() {
           throw new Error("TIMEOUT");
         }
 
-        // Si no es un error reintentable, lanzar directamente
         if (
           err.message === "RATE_LIMIT" ||
           err.message === "API_KEY_INVALID" ||
@@ -1075,7 +987,6 @@ export default function App() {
           throw err;
         }
 
-        // Error de red: reintentar si quedan intentos
         if (attempt < maxRetries) {
           console.warn(`Error de red, reintento ${attempt + 1}:`, err.message);
           continue;
@@ -1090,12 +1001,12 @@ export default function App() {
     const messages = {
       RATE_LIMIT: {
         title: "⏱️ Demasiadas solicitudes",
-        desc: "La API de Groq tiene un límite de peticiones. Espera 30 segundos y pulsa \"Nuevas ideas\".",
+        desc: 'La API de Groq tiene un límite de peticiones. Espera 30 segundos y pulsa "Nuevas ideas".',
         canRetry: true,
       },
       API_KEY_INVALID: {
         title: "🔑 Clave API no válida",
-        desc: "La clave de Groq no está configurada o es incorrecta. Asegúrate de tener REACT_APP_GROQ_API_KEY en tu archivo .env y reinicia la app.",
+        desc: "La clave de Groq ha caducado o es incorrecta. Contacta con el desarrollador.",
         canRetry: false,
       },
       BAD_REQUEST: {
@@ -1135,7 +1046,7 @@ export default function App() {
       },
       PARSE_ERROR: {
         title: "🔄 Error al leer sugerencias",
-        desc: "La IA devolvió un formato inesperado. Pulsa \"Nuevas ideas\" para reintentar.",
+        desc: 'La IA devolvió un formato inesperado. Pulsa "Nuevas ideas" para reintentar.',
         canRetry: true,
       },
       MAX_RETRIES: {
@@ -1144,11 +1055,13 @@ export default function App() {
         canRetry: true,
       },
     };
-    return messages[code] || {
-      title: "⚠️ Error inesperado",
-      desc: `Algo salió mal (${code}). Inténtalo de nuevo.`,
-      canRetry: true,
-    };
+    return (
+      messages[code] || {
+        title: "⚠️ Error inesperado",
+        desc: `Algo salió mal (${code}). Inténtalo de nuevo.`,
+        canRetry: true,
+      }
+    );
   };
 
   const fetchSugg = async (forceRefresh = false) => {
@@ -1157,13 +1070,11 @@ export default function App() {
       return;
     }
 
-    // Evitar llamadas duplicadas concurrentes
     if (fetchingRef.current) {
       console.log("fetchSugg: ya hay una petición en curso, ignorando");
       return;
     }
 
-    // Comprobar caché (a menos que se fuerce refresh)
     const cacheKey = `day_${sel}`;
     if (!forceRefresh && suggCache[cacheKey]) {
       console.log("fetchSugg: usando caché para día", sel);
@@ -1182,20 +1093,22 @@ export default function App() {
     const list = d.activities.map((a) => `${a.time}: ${a.title}`).join("; ");
 
     try {
-      const prompt = `Viaje familiar (2 adultos, adolescente de 16 y niño de 9) a ${d.city} el ${d.date}. Agenda actual: ${list || "nada"}. Sugiere 3 actividades y 2 restaurantes familiares económicos que NO estén ya en la agenda. Responde SOLO con JSON puro sin markdown ni backticks: {"activities":[{"icon":"emoji","title":"nombre","time":"hora sugerida","desc":"descripción breve de 1 línea","budget":numero_en_euros,"address":"dirección real","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre real","time":"hora sugerida","desc":"descripción breve","budget":numero_en_euros,"address":"dirección real","link":""}]}`;
+      const prompt = `Viaje familiar (2 adultos, adolescente de 16 y niño de 9) a ${
+        d.city
+      } el ${d.date}. Agenda actual: ${
+        list || "nada"
+      }. Sugiere 3 actividades y 2 restaurantes familiares económicos que NO estén ya en la agenda. Responde SOLO con JSON puro sin markdown ni backticks: {"activities":[{"icon":"emoji","title":"nombre","time":"hora sugerida","desc":"descripción breve de 1 línea","budget":numero_en_euros,"address":"dirección real","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre real","time":"hora sugerida","desc":"descripción breve","budget":numero_en_euros,"address":"dirección real","link":""}]}`;
 
       const rawText = await callGroqWithRetry(prompt);
 
       setAiStatus("🧩 Interpretando sugerencias...");
 
-      // Limpieza robusta del texto de respuesta
       let cleaned = rawText
         .replace(/```json\s*/gi, "")
         .replace(/```\s*/g, "")
         .replace(/^\s*[\r\n]+/, "")
         .trim();
 
-      // Intentar extraer JSON si hay texto antes/después
       const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         cleaned = jsonMatch[0];
@@ -1205,21 +1118,27 @@ export default function App() {
       try {
         parsed = JSON.parse(cleaned);
       } catch (parseErr) {
-        console.error("Error parsing JSON de Groq:", parseErr, "\nTexto recibido:", rawText.substring(0, 500));
+        console.error(
+          "Error parsing JSON de Groq:",
+          parseErr,
+          "\nTexto recibido:",
+          rawText.substring(0, 500)
+        );
         throw new Error("PARSE_ERROR");
       }
 
-      // Validar estructura mínima
       if (!parsed.activities && !parsed.restaurants) {
         console.error("Estructura inesperada de Groq:", parsed);
         throw new Error("PARSE_ERROR");
       }
 
-      // Normalizar: asegurar que activities y restaurants sean arrays
-      parsed.activities = Array.isArray(parsed.activities) ? parsed.activities : [];
-      parsed.restaurants = Array.isArray(parsed.restaurants) ? parsed.restaurants : [];
+      parsed.activities = Array.isArray(parsed.activities)
+        ? parsed.activities
+        : [];
+      parsed.restaurants = Array.isArray(parsed.restaurants)
+        ? parsed.restaurants
+        : [];
 
-      // Limpiar valores de budget por si vienen como string
       [...parsed.activities, ...parsed.restaurants].forEach((item) => {
         item.budget = parseFloat(item.budget) || 0;
         item.icon = item.icon || "🎯";
@@ -1230,7 +1149,6 @@ export default function App() {
       setSugg(parsed);
       setAiError(null);
 
-      // Guardar en caché
       setSuggCache((prev) => ({ ...prev, [cacheKey]: parsed }));
     } catch (err) {
       console.error("Error Groq completo:", err);
@@ -1489,19 +1407,14 @@ export default function App() {
                         background: "rgba(255,255,255,0.25)",
                         borderRadius: 16,
                         padding: "12px 16px",
-                        marginBottom: 4,
+                        marginBottom: 12,
                         backdropFilter: "blur(5px)",
                         cursor: "pointer",
                         boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                        transition: "transform 0.3s, opacity 0.5s",
-                        opacity: weatherRefreshing ? 0.7 : 1,
+                        transition: "transform 0.2s",
                       }}
                     >
-                      {weatherError && !todayWeather ? (
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#fca5a5" }}>
-                          ⚠️ Error clima
-                        </div>
-                      ) : todayWeather ? (
+                      {todayWeather ? (
                         <div
                           style={{
                             display: "flex",
@@ -1509,8 +1422,8 @@ export default function App() {
                             gap: 10,
                           }}
                         >
-                          <span style={{ fontSize: 28, transition: "transform 0.5s" }}>
-                            {weatherRefreshing ? "🔄" : todayWeather.icon}
+                          <span style={{ fontSize: 28 }}>
+                            {todayWeather.icon}
                           </span>
                           <div
                             style={{
@@ -1530,35 +1443,9 @@ export default function App() {
                         </div>
                       ) : (
                         <div style={{ fontSize: 16, fontWeight: 700 }}>
-                          {weatherRefreshing ? "🔄 Cargando..." : "Cargando clima..."}
+                          Cargando clima...
                         </div>
                       )}
-                    </div>
-                    {/* Botón refrescar + última actualización */}
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, marginBottom: 8 }}>
-                      {weatherLastUpdated && (
-                        <span style={{ fontSize: 10, opacity: 0.6, fontWeight: 500 }}>
-                          {weatherLastUpdated.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                      )}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); fetchWeather(true); }}
-                        disabled={weatherRefreshing}
-                        title="Refrescar clima"
-                        style={{
-                          background: "rgba(255,255,255,0.2)",
-                          border: "none",
-                          borderRadius: 8,
-                          padding: "3px 7px",
-                          cursor: weatherRefreshing ? "not-allowed" : "pointer",
-                          fontSize: 13,
-                          color: "white",
-                          opacity: weatherRefreshing ? 0.5 : 0.8,
-                          transition: "opacity 0.2s",
-                        }}
-                      >
-                        {weatherRefreshing ? "⏳" : "🔄"}
-                      </button>
                     </div>
                     <div
                       style={{ fontSize: 16, fontWeight: 800, opacity: 0.9 }}
@@ -1772,6 +1659,7 @@ export default function App() {
                         >
                           {a.desc}
                         </p>
+
                         <div
                           data-html2canvas-ignore="true"
                           style={{ margin: "14px 0" }}
@@ -1847,6 +1735,7 @@ export default function App() {
                             </label>
                           )}
                         </div>
+
                         {a.address && (
                           <div style={{ marginBottom: 14 }}>
                             <a
@@ -2102,6 +1991,7 @@ export default function App() {
                   </div>
                   <span
                     style={{
+                      flex: 1,
                       fontSize: 18,
                       fontWeight: item.done ? 600 : 800,
                       color: item.done ? "#166534" : "#374151",
@@ -2110,6 +2000,26 @@ export default function App() {
                   >
                     {item.text}
                   </span>
+                  
+                  {/* 👇 BOTÓN NUEVO PARA BORRAR EN LA MALETA 👇 */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      delCheck(idx);
+                    }}
+                    title="Borrar elemento"
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      fontSize: 20,
+                      cursor: "pointer",
+                      padding: "4px",
+                      opacity: 0.7,
+                    }}
+                  >
+                    🗑️
+                  </button>
+
                 </div>
               ))}
             </div>
@@ -2233,10 +2143,24 @@ export default function App() {
               }}
             >
               <div>
-                <h3 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 900, color: "#111827" }}>
+                <h3
+                  style={{
+                    margin: "0 0 4px",
+                    fontSize: 20,
+                    fontWeight: 900,
+                    color: "#111827",
+                  }}
+                >
                   ✨ Ideas para {day.city}
                 </h3>
-                <p style={{ margin: 0, fontSize: 14, color: "#6b7280", fontWeight: 600 }}>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: 14,
+                    color: "#6b7280",
+                    fontWeight: 600,
+                  }}
+                >
                   Sugerencias personalizadas por IA
                 </p>
               </div>
@@ -2276,11 +2200,28 @@ export default function App() {
                   border: "2px solid #bfdbfe",
                 }}
               >
-                <div style={{ fontSize: 40, marginBottom: 12, animation: "pulse 1.5s infinite" }}>🧠</div>
-                <div style={{ fontSize: 17, fontWeight: 800, color: "#1e40af", marginBottom: 8 }}>
+                <div
+                  style={{
+                    fontSize: 40,
+                    marginBottom: 12,
+                    animation: "pulse 1.5s infinite",
+                  }}
+                >
+                  🧠
+                </div>
+                <div
+                  style={{
+                    fontSize: 17,
+                    fontWeight: 800,
+                    color: "#1e40af",
+                    marginBottom: 8,
+                  }}
+                >
                   Generando ideas...
                 </div>
-                <div style={{ fontSize: 15, color: "#3b82f6", fontWeight: 600 }}>
+                <div
+                  style={{ fontSize: 15, color: "#3b82f6", fontWeight: 600 }}
+                >
                   {aiStatus || "Conectando con Groq IA..."}
                 </div>
                 <div
@@ -2313,13 +2254,29 @@ export default function App() {
                   padding: "20px 24px",
                   marginBottom: 16,
                   marginTop: 14,
-                  border: `2px solid ${aiError.canRetry ? "#fecaca" : "#fde68a"}`,
+                  border: `2px solid ${
+                    aiError.canRetry ? "#fecaca" : "#fde68a"
+                  }`,
                 }}
               >
-                <div style={{ fontSize: 18, fontWeight: 900, color: aiError.canRetry ? "#991b1b" : "#92400e", marginBottom: 8 }}>
+                <div
+                  style={{
+                    fontSize: 18,
+                    fontWeight: 900,
+                    color: aiError.canRetry ? "#991b1b" : "#92400e",
+                    marginBottom: 8,
+                  }}
+                >
                   {aiError.title}
                 </div>
-                <p style={{ margin: "0 0 14px", fontSize: 15, color: "#6b7280", lineHeight: 1.5 }}>
+                <p
+                  style={{
+                    margin: "0 0 14px",
+                    fontSize: 15,
+                    color: "#6b7280",
+                    lineHeight: 1.5,
+                  }}
+                >
                   {aiError.desc}
                 </p>
                 {aiError.canRetry && (
@@ -2346,7 +2303,14 @@ export default function App() {
             {/* Sugerencias de actividades */}
             {sugg?.activities?.length > 0 && (
               <div style={{ marginTop: 14 }}>
-                <h4 style={{ margin: "0 0 12px", fontSize: 17, fontWeight: 900, color: "#374151" }}>
+                <h4
+                  style={{
+                    margin: "0 0 12px",
+                    fontSize: 17,
+                    fontWeight: 900,
+                    color: "#374151",
+                  }}
+                >
                   🎯 Actividades sugeridas
                 </h4>
                 {sugg.activities.map((a, i) => (
@@ -2356,7 +2320,12 @@ export default function App() {
                     col={col}
                     onAdd={() => {
                       const nDias = [...data.dias];
-                      nDias[sel].activities.push({ ...a, category: "activity", done: false, confirmed: false });
+                      nDias[sel].activities.push({
+                        ...a,
+                        category: "activity",
+                        done: false,
+                        confirmed: false,
+                      });
                       persist({ ...data, dias: nDias });
                     }}
                   />
@@ -2367,7 +2336,14 @@ export default function App() {
             {/* Sugerencias de restaurantes */}
             {sugg?.restaurants?.length > 0 && (
               <div style={{ marginTop: 14 }}>
-                <h4 style={{ margin: "0 0 12px", fontSize: 17, fontWeight: 900, color: "#374151" }}>
+                <h4
+                  style={{
+                    margin: "0 0 12px",
+                    fontSize: 17,
+                    fontWeight: 900,
+                    color: "#374151",
+                  }}
+                >
                   🍽️ Restaurantes sugeridos
                 </h4>
                 {sugg.restaurants.map((r, i) => (
@@ -2377,7 +2353,12 @@ export default function App() {
                     col={col}
                     onAdd={() => {
                       const nDias = [...data.dias];
-                      nDias[sel].activities.push({ ...r, category: "restaurant", done: false, confirmed: false });
+                      nDias[sel].activities.push({
+                        ...r,
+                        category: "restaurant",
+                        done: false,
+                        confirmed: false,
+                      });
                       persist({ ...data, dias: nDias });
                     }}
                   />
@@ -2398,10 +2379,19 @@ export default function App() {
                 }}
               >
                 <div style={{ fontSize: 48, marginBottom: 12 }}>✨</div>
-                <p style={{ fontSize: 17, fontWeight: 800, color: "#374151", margin: "0 0 8px" }}>
+                <p
+                  style={{
+                    fontSize: 17,
+                    fontWeight: 800,
+                    color: "#374151",
+                    margin: "0 0 8px",
+                  }}
+                >
                   ¿Necesitas inspiración?
                 </p>
-                <p style={{ fontSize: 15, color: "#6b7280", margin: "0 0 20px" }}>
+                <p
+                  style={{ fontSize: 15, color: "#6b7280", margin: "0 0 20px" }}
+                >
                   Pulsa "Nuevas ideas" para que la IA te sugiera planes
                 </p>
                 <button
