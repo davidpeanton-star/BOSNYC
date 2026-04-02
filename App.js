@@ -15,8 +15,9 @@ const firebaseConfig = {
   measurementId: "G-DBRNDPWLPB",
 };
 
-// 👇 TU CLAVE DE GEMINI 👇
-const AI_API_KEY = "AIzaSyC9k6-Lf7lVZujVSYXNYBhGoApp-gyf-sQ";
+// 👇 TU CLAVE DE GROQ 👇
+const GROQ_API_KEY = "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";
+const GROQ_MODEL = "llama-3.3-70b-versatile";
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
@@ -760,13 +761,15 @@ export default function App() {
   const persist = async (newData) => {
     setData(newData);
     setSaveStatus("saving");
+    let didFail = false;
     try {
       await setDoc(TRIP_DOC, newData);
       setSaveStatus("saved");
     } catch {
       setSaveStatus("err");
+      didFail = true;
     }
-    setTimeout(() => setSaveStatus(saveStatus === "err" ? "" : "cloud"), 2200);
+    setTimeout(() => setSaveStatus(didFail ? "" : "cloud"), 2200);
   };
 
   const openAdd = () => {
@@ -805,14 +808,20 @@ export default function App() {
   };
 
   const toggleDone = (di, ai) => {
-    const nDias = [...data.dias];
-    nDias[di].activities[ai].done = !nDias[di].activities[ai].done;
+    const nDias = data.dias.map((d, i) => {
+      if (i !== di) return d;
+      const newActivities = d.activities.map((a, j) =>
+        j !== ai ? a : { ...a, done: !a.done }
+      );
+      return { ...d, activities: newActivities };
+    });
     persist({ ...data, dias: nDias });
   };
 
   const updateComments = (text) => {
-    const nDias = [...data.dias];
-    nDias[sel].comments = text;
+    const nDias = data.dias.map((d, i) =>
+      i !== sel ? d : { ...d, comments: text }
+    );
     setData({ ...data, dias: nDias });
   };
 
@@ -849,10 +858,16 @@ export default function App() {
       const fileRef = ref(storage, `foto_actividad_${di}_${ai}_${Date.now()}`);
       await uploadBytes(fileRef, file);
       const url = await getDownloadURL(fileRef);
-      const nDias = [...data.dias];
-      nDias[di].activities[ai].photo = url;
+      const nDias = data.dias.map((d, i) => {
+        if (i !== di) return d;
+        const newActivities = d.activities.map((a, j) =>
+          j !== ai ? a : { ...a, photo: url }
+        );
+        return { ...d, activities: newActivities };
+      });
       await persist({ ...data, dias: nDias });
     } catch (err) {
+      console.error("Error al subir foto:", err);
       alert(
         "Error al subir foto. Asegúrate de haber abierto las reglas de Firebase Storage."
       );
@@ -903,17 +918,26 @@ export default function App() {
     });
   };
 
-  // ✅ GEMINI API: retry con backoff exponencial + timeout + cache + error UI
-  const callGeminiWithRetry = async (prompt, maxRetries = 3) => {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${AI_API_KEY}`;
+  // ✅ GROQ API (compatible OpenAI): retry con backoff exponencial + timeout + cache + error UI
+  const callGroqWithRetry = async (prompt, maxRetries = 3) => {
+    const url = "https://api.groq.com/openai/v1/chat/completions";
     const body = JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
+      model: GROQ_MODEL,
+      messages: [
+        {
+          role: "system",
+          content: "Eres un asistente de viajes experto. Responde SIEMPRE con JSON puro, sin markdown, sin backticks, sin texto adicional."
+        },
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.7,
+      max_tokens: 1500,
     });
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      // AbortController con timeout de 20 segundos
+      // AbortController con timeout de 25 segundos
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
 
       try {
         if (attempt > 0) {
@@ -921,12 +945,15 @@ export default function App() {
           setAiStatus(`⏳ Reintentando (${attempt}/${maxRetries})... espera ${Math.ceil(waitMs / 1000)}s`);
           await new Promise((r) => setTimeout(r, waitMs));
         } else {
-          setAiStatus("🔗 Conectando con Gemini...");
+          setAiStatus("🔗 Conectando con Groq IA...");
         }
 
         const res = await fetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${GROQ_API_KEY}`,
+          },
           body,
           signal: controller.signal,
         });
@@ -935,7 +962,7 @@ export default function App() {
 
         // Si es 429 (rate limit) y quedan reintentos, esperar y reintentar
         if (res.status === 429 && attempt < maxRetries) {
-          console.warn(`Gemini 429 rate limit, reintento ${attempt + 1}/${maxRetries}`);
+          console.warn(`Groq 429 rate limit, reintento ${attempt + 1}/${maxRetries}`);
           continue;
         }
 
@@ -944,9 +971,13 @@ export default function App() {
           const errorBody = await res.text().catch(() => "");
           if (res.status === 429) {
             throw new Error("RATE_LIMIT");
-          } else if (res.status === 403) {
+          } else if (res.status === 401) {
             throw new Error("API_KEY_INVALID");
           } else if (res.status === 400) {
+            // Comprobar si es un error de modelo deprecado
+            if (errorBody.includes("decommissioned")) {
+              throw new Error("MODEL_DEPRECATED");
+            }
             throw new Error("BAD_REQUEST");
           } else if (res.status >= 500) {
             if (attempt < maxRetries) continue; // reintentar errores del servidor
@@ -960,18 +991,19 @@ export default function App() {
         const jsonData = await res.json();
 
         if (jsonData.error) {
-          throw new Error(jsonData.error.message || "GEMINI_ERROR");
+          throw new Error(jsonData.error.message || "GROQ_ERROR");
         }
 
-        // Verificar que la respuesta tenga la estructura esperada
-        if (!jsonData.candidates?.[0]?.content?.parts?.[0]?.text) {
-          if (jsonData.candidates?.[0]?.finishReason === "SAFETY") {
+        // Verificar estructura OpenAI-compatible de Groq
+        const content = jsonData.choices?.[0]?.message?.content;
+        if (!content) {
+          if (jsonData.choices?.[0]?.finish_reason === "content_filter") {
             throw new Error("SAFETY_BLOCK");
           }
           throw new Error("EMPTY_RESPONSE");
         }
 
-        return jsonData.candidates[0].content.parts[0].text;
+        return content;
       } catch (err) {
         clearTimeout(timeoutId);
 
@@ -986,7 +1018,8 @@ export default function App() {
           err.message === "API_KEY_INVALID" ||
           err.message === "BAD_REQUEST" ||
           err.message === "SAFETY_BLOCK" ||
-          err.message === "EMPTY_RESPONSE"
+          err.message === "EMPTY_RESPONSE" ||
+          err.message === "MODEL_DEPRECATED"
         ) {
           throw err;
         }
@@ -1006,12 +1039,12 @@ export default function App() {
     const messages = {
       RATE_LIMIT: {
         title: "⏱️ Demasiadas solicitudes",
-        desc: "La API de Gemini tiene un límite de peticiones. Espera 30 segundos y pulsa \"Nuevas ideas\".",
+        desc: "La API de Groq tiene un límite de peticiones. Espera 30 segundos y pulsa \"Nuevas ideas\".",
         canRetry: true,
       },
       API_KEY_INVALID: {
         title: "🔑 Clave API no válida",
-        desc: "La clave de Gemini ha caducado o es incorrecta. Contacta con el desarrollador.",
+        desc: "La clave de Groq ha caducado o es incorrecta. Contacta con el desarrollador.",
         canRetry: false,
       },
       BAD_REQUEST: {
@@ -1020,9 +1053,14 @@ export default function App() {
         canRetry: true,
       },
       SERVER_ERROR: {
-        title: "🔧 Error del servidor de Google",
-        desc: "Los servidores de Gemini están saturados. Inténtalo en unos minutos.",
+        title: "🔧 Error del servidor de Groq",
+        desc: "Los servidores de Groq están saturados. Inténtalo en unos minutos.",
         canRetry: true,
+      },
+      MODEL_DEPRECATED: {
+        title: "🤖 Modelo no disponible",
+        desc: "El modelo de IA ha sido retirado. Contacta con el desarrollador para actualizar.",
+        canRetry: false,
       },
       TIMEOUT: {
         title: "⏰ Tiempo de espera agotado",
@@ -1031,17 +1069,17 @@ export default function App() {
       },
       NETWORK_ERROR: {
         title: "📡 Error de conexión",
-        desc: "No se pudo conectar con Google. Revisa tu conexión a internet.",
+        desc: "No se pudo conectar con Groq. Revisa tu conexión a internet.",
         canRetry: true,
       },
       SAFETY_BLOCK: {
         title: "🛡️ Respuesta bloqueada",
-        desc: "Google filtró la respuesta por seguridad. Inténtalo de nuevo.",
+        desc: "La IA filtró la respuesta por seguridad. Inténtalo de nuevo.",
         canRetry: true,
       },
       EMPTY_RESPONSE: {
         title: "📭 Respuesta vacía",
-        desc: "Gemini no generó sugerencias. Inténtalo de nuevo.",
+        desc: "La IA no generó sugerencias. Inténtalo de nuevo.",
         canRetry: true,
       },
       PARSE_ERROR: {
@@ -1063,12 +1101,12 @@ export default function App() {
   };
 
   const fetchSugg = async (forceRefresh = false) => {
-    if (!AI_API_KEY) {
+    if (!GROQ_API_KEY) {
       setAiError(getErrorMessage("API_KEY_INVALID"));
       return;
     }
 
-    // Evitar llamadas duplicatas concurrentes
+    // Evitar llamadas duplicadas concurrentes
     if (fetchingRef.current) {
       console.log("fetchSugg: ya hay una petición en curso, ignorando");
       return;
@@ -1087,7 +1125,7 @@ export default function App() {
     setAiLoading(true);
     setSugg(null);
     setAiError(null);
-    setAiStatus("🔗 Conectando con Gemini...");
+    setAiStatus("🔗 Conectando con Groq IA...");
 
     const d = data.dias[sel];
     const list = d.activities.map((a) => `${a.time}: ${a.title}`).join("; ");
@@ -1095,7 +1133,7 @@ export default function App() {
     try {
       const prompt = `Viaje familiar (2 adultos, adolescente de 16 y niño de 9) a ${d.city} el ${d.date}. Agenda actual: ${list || "nada"}. Sugiere 3 actividades y 2 restaurantes familiares económicos que NO estén ya en la agenda. Responde SOLO con JSON puro sin markdown ni backticks: {"activities":[{"icon":"emoji","title":"nombre","time":"hora sugerida","desc":"descripción breve de 1 línea","budget":numero_en_euros,"address":"dirección real","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre real","time":"hora sugerida","desc":"descripción breve","budget":numero_en_euros,"address":"dirección real","link":""}]}`;
 
-      const rawText = await callGeminiWithRetry(prompt);
+      const rawText = await callGroqWithRetry(prompt);
 
       setAiStatus("🧩 Interpretando sugerencias...");
 
@@ -1116,13 +1154,13 @@ export default function App() {
       try {
         parsed = JSON.parse(cleaned);
       } catch (parseErr) {
-        console.error("Error parsing JSON de Gemini:", parseErr, "\nTexto recibido:", rawText.substring(0, 500));
+        console.error("Error parsing JSON de Groq:", parseErr, "\nTexto recibido:", rawText.substring(0, 500));
         throw new Error("PARSE_ERROR");
       }
 
       // Validar estructura mínima
       if (!parsed.activities && !parsed.restaurants) {
-        console.error("Estructura inesperada de Gemini:", parsed);
+        console.error("Estructura inesperada de Groq:", parsed);
         throw new Error("PARSE_ERROR");
       }
 
@@ -1144,7 +1182,7 @@ export default function App() {
       // Guardar en caché
       setSuggCache((prev) => ({ ...prev, [cacheKey]: parsed }));
     } catch (err) {
-      console.error("Error Gemini completo:", err);
+      console.error("Error Groq completo:", err);
       const errorInfo = getErrorMessage(err.message);
       setAiError(errorInfo);
       setSugg(null);
@@ -1225,7 +1263,7 @@ export default function App() {
         >
           <div>
             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800 }}>
-              🇺🇸 Boston & NY
+              🇺🇸 Boston & New York
             </h1>
             <p style={{ margin: "6px 0 0", opacity: 0.8, fontSize: 16 }}>
               3–11 Abril · Viaje David, Sandra, Inés y Álvaro
@@ -1277,7 +1315,7 @@ export default function App() {
             ["logbook", "📖 Bitácora"],
             ["checklist", "🎒 Maleta"],
             ["budget", "💰 Gastos"],
-            ["suggestions", "✨ Ideas"],
+            ["suggestions", "✨ Ideas IA"],
             ["summary", "🏁 Resumen"],
           ].map(([v, l]) => (
             <button
@@ -2161,7 +2199,7 @@ export default function App() {
                   Generando ideas...
                 </div>
                 <div style={{ fontSize: 15, color: "#3b82f6", fontWeight: 600 }}>
-                  {aiStatus || "Conectando con Gemini..."}
+                  {aiStatus || "Conectando con Groq IA..."}
                 </div>
                 <div
                   style={{
