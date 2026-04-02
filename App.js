@@ -774,18 +774,13 @@ export default function App() {
     });
   };
 
-  // ✅ FIXES APLICADOS:
-  // 1. Modelo cambiado a gemini-2.0-flash (el 1.5-flash daba 404)
-  // 2. Eliminado generationConfig (causaba errores en algunos planes)
-  // 3. Parsing robusto que limpia markdown por si acaso
+  // ✅ CORREGIDO: gemini-2.0-flash + parsing robusto sin generationConfig
   const fetchSugg = async () => {
     if (!AI_API_KEY) return alert("¡Falta la clave de Gemini en el código!");
-
     setAiLoading(true);
     setSugg(null);
     const d = data.dias[sel];
     const list = d.activities.map((a) => `${a.time}: ${a.title}`).join("; ");
-
     try {
       const prompt = `Viaje familiar (2 adultos, adolescentes 16 y niño 9) a ${d.city}. Agenda actual: ${list || "nada"}. Sugiere 3 planes y 2 restaurantes familiares baratos. Responde SOLO con un JSON estricto y sin markdown: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
 
@@ -805,22 +800,17 @@ export default function App() {
       }
 
       const jsonStr = await res.json();
-
-      if (jsonStr.error) {
-        throw new Error(jsonStr.error.message);
-      }
+      if (jsonStr.error) throw new Error(jsonStr.error.message);
 
       let raw = jsonStr.candidates[0].content.parts[0].text;
       // Limpieza robusta: elimina bloques ```json ... ``` si los hay
       raw = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
       setSugg(JSON.parse(raw));
-
     } catch (err) {
       console.error("Error técnico completo:", err);
       alert("💥 ATENCIÓN DAVID, ESTE ES EL ERROR EXACTO:\n\n" + err.message);
       setSugg({ error: true });
     }
-
     setAiLoading(false);
   };
 
@@ -835,8 +825,7 @@ export default function App() {
   const day = days[sel];
   const col = getDayColor(day.city, day.label);
   const total = days.reduce(
-    (s, d) => s + d.activities.reduce((ss, a) => ss + (parseFloat(a.budget) || 0), 0),
-    0
+    (s, d) => s + d.activities.reduce((ss, a) => ss + (parseFloat(a.budget) || 0), 0), 0
   );
   const inp = {
     width: "100%", padding: "14px 16px", borderRadius: 12, border: "2px solid #ddd",
@@ -846,7 +835,6 @@ export default function App() {
   const dayNum = parseInt(day.date.replace(/\D/g, ""), 10);
   const cityKey = day.city.includes("New York") ? "New York" : "Boston";
   const todayWeather = weatherData[`${cityKey}-${dayNum}`];
-
   const sortedActivities = day.activities
     .map((act, index) => ({ ...act, originalIndex: index }))
     .sort((a, b) => parseTime(a.time) - parseTime(b.time));
