@@ -15,7 +15,7 @@ const firebaseConfig = {
   measurementId: "G-DBRNDPWLPB",
 };
 
-// 👇 TU CLAVE DE GEMINI (PEGADA DIRECTAMENTE PARA EVITAR FALLOS DE ENTORNO) 👇
+// 👇 LÍNEA 19: TU CLAVE DE GEMINI YA INSERTADA 👇
 const AI_API_KEY = "AIzaSyC9k6-Lf7lVZujVSYXNYBhGoApp-gyf-sQ";
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -789,14 +789,14 @@ export default function App() {
     setUploading(null);
   };
 
-  // 👇 GOOGLE MAPS: URLS OFICIALES Y ESTÁNDAR 👇
   const openSuperMap = () => {
     const acts = data.dias[sel].activities.filter((a) => a.address);
     if (acts.length === 0)
       return alert("No hay actividades con dirección guardada hoy.");
       
     if (acts.length === 1) {
-      const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(acts[0].address)}`;
+      const dest = encodeURIComponent(acts[0].address);
+      const url = `https://www.google.com/maps/search/?api=1&query=${dest}`;
       return window.open(url, "_blank", "noopener,noreferrer");
     }
     
@@ -805,11 +805,9 @@ export default function App() {
     const waypoints = acts
       .slice(1, -1)
       .map((a) => encodeURIComponent(a.address))
-      .join("|");
+      .join("%7C");
       
-    let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=walking`;
-    if (waypoints) url += `&waypoints=${waypoints}`;
-    
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -834,7 +832,7 @@ export default function App() {
     });
   };
 
-  // 👇 CEREBRO DE IA: BLINDADO, ESTRICTO Y CON ALERTAS DE ERROR 👇
+  // 👇 CEREBRO DE IA: CORREGIDO A LA VERSIÓN 2.5 QUE SÍ FUNCIONA 👇
   const fetchSugg = async () => {
     if (!AI_API_KEY) {
       return alert("¡Falta la clave de Gemini en el código!");
@@ -849,13 +847,13 @@ export default function App() {
       const prompt = `Viaje familiar (2 adultos, adolescentes 16 y niño 9) a ${d.city}. Agenda actual: ${list || "nada"}. Sugiere 3 planes y 2 restaurantes familiares baratos. Responde SOLO con un JSON estricto y sin markdown: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
       
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${AI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AI_API_KEY}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
             contents: [{ parts: [{ text: prompt }] }],
-            // Obligamos a Google a devolver SÓLO datos puros
+            // Obligamos a Google a devolver SÓLO datos puros para que no se rompa la web
             generationConfig: { responseMimeType: "application/json" }
           }),
         }
