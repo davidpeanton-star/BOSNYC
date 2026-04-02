@@ -15,13 +15,14 @@ const firebaseConfig = {
   measurementId: "G-DBRNDPWLPB",
 };
 
-// 👇 TU CLAVE DE LA IA CONFIGURADA 👇
-const AI_API_KEY = "AIzaSyDSqRz_SekjRMjHmkzWRqkyyhPItcB3Qb8";
+// 👇 TU CLAVE DE GROQ 👇
+const GROQ_API_KEY = "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";
+const GROQ_MODEL = "llama-3.3-70b-versatile";
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const storage = getStorage(app);
-const TRIP_DOC = doc(db, "viajes", "boston_ny_2025");
+const TRIP_DOC = doc(db, "viajes", "viaje_definitivo_2026");
 
 const ICONS = [
   "🏨",
@@ -80,6 +81,7 @@ const ICONS = [
   "🌉",
   "🎯",
 ];
+
 const CAT = {
   activity: { label: "Actividad", bg: "#e8f4fd", col: "#1a73e8" },
   restaurant: { label: "Restaurante", bg: "#fef6e4", col: "#e67e22" },
@@ -122,7 +124,7 @@ const INIT_CHECKLIST = [
 
 const INIT_DAYS = [
   {
-    date: "Jue 3 Abril",
+    date: "Vie 3 Abril",
     city: "Boston",
     emoji: "✈️",
     label: "Llegada a Boston",
@@ -167,7 +169,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Vie 4 Abril",
+    date: "Sáb 4 Abril",
     city: "Boston",
     emoji: "🏛️",
     label: "Boston histórico",
@@ -224,7 +226,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Sáb 5 Abril",
+    date: "Dom 5 Abril",
     city: "Boston",
     emoji: "🏀",
     label: "Boston libre + ¡Celtics!",
@@ -281,7 +283,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Dom 6 Abril",
+    date: "Lun 6 Abril",
     city: "Boston → New York",
     emoji: "🚗",
     label: "Road Trip a NYC",
@@ -338,7 +340,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Lun 7 Abril",
+    date: "Mar 7 Abril",
     city: "New York",
     emoji: "🗽",
     label: "Estatua de la Libertad",
@@ -395,7 +397,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Mar 8 Abril",
+    date: "Mié 8 Abril",
     city: "New York",
     emoji: "🏙️",
     label: "El Bronx + Summit",
@@ -440,7 +442,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Mié 9 Abril",
+    date: "Jue 9 Abril",
     city: "New York",
     emoji: "🎭",
     label: "Central Park & Cultura",
@@ -485,7 +487,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Jue 10 Abril",
+    date: "Vie 10 Abril",
     city: "New York",
     emoji: "🌆",
     label: "Manhattan Norte & Sur",
@@ -530,7 +532,7 @@ const INIT_DAYS = [
     ],
   },
   {
-    date: "Vie 11 Abril",
+    date: "Sáb 11 Abril",
     city: "Boston ✈️",
     emoji: "✈️",
     label: "Vuelta a casa ⚠️",
@@ -672,6 +674,10 @@ export default function App() {
   const [iconPicker, setIconPicker] = useState(false);
   const [sugg, setSugg] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState(null);
+  const [aiStatus, setAiStatus] = useState(""); // "", "connecting", "retrying", "parsing"
+  const [suggCache, setSuggCache] = useState({}); // cache por día
+  const [fetchingRef] = useState({ current: false }); // evitar llamadas duplicadas
   const [delConfirm, setDelConfirm] = useState(null);
   const [saveStatus, setSaveStatus] = useState("");
   const [weatherData, setWeatherData] = useState({});
@@ -755,13 +761,15 @@ export default function App() {
   const persist = async (newData) => {
     setData(newData);
     setSaveStatus("saving");
+    let didFail = false;
     try {
       await setDoc(TRIP_DOC, newData);
       setSaveStatus("saved");
     } catch {
       setSaveStatus("err");
+      didFail = true;
     }
-    setTimeout(() => setSaveStatus(saveStatus === "err" ? "" : "cloud"), 2200);
+    setTimeout(() => setSaveStatus(didFail ? "" : "cloud"), 2200);
   };
 
   const openAdd = () => {
@@ -779,6 +787,7 @@ export default function App() {
     setEditModal({ di: sel, ai: -1 });
     setIconPicker(false);
   };
+
   const openEdit = (di, ai) => {
     setForm({ ...data.dias[di].activities[ai] });
     setEditModal({ di, ai });
@@ -799,14 +808,20 @@ export default function App() {
   };
 
   const toggleDone = (di, ai) => {
-    const nDias = [...data.dias];
-    nDias[di].activities[ai].done = !nDias[di].activities[ai].done;
+    const nDias = data.dias.map((d, i) => {
+      if (i !== di) return d;
+      const newActivities = d.activities.map((a, j) =>
+        j !== ai ? a : { ...a, done: !a.done }
+      );
+      return { ...d, activities: newActivities };
+    });
     persist({ ...data, dias: nDias });
   };
 
   const updateComments = (text) => {
-    const nDias = [...data.dias];
-    nDias[sel].comments = text;
+    const nDias = data.dias.map((d, i) =>
+      i !== sel ? d : { ...d, comments: text }
+    );
     setData({ ...data, dias: nDias });
   };
 
@@ -843,10 +858,16 @@ export default function App() {
       const fileRef = ref(storage, `foto_actividad_${di}_${ai}_${Date.now()}`);
       await uploadBytes(fileRef, file);
       const url = await getDownloadURL(fileRef);
-      const nDias = [...data.dias];
-      nDias[di].activities[ai].photo = url;
+      const nDias = data.dias.map((d, i) => {
+        if (i !== di) return d;
+        const newActivities = d.activities.map((a, j) =>
+          j !== ai ? a : { ...a, photo: url }
+        );
+        return { ...d, activities: newActivities };
+      });
       await persist({ ...data, dias: nDias });
     } catch (err) {
+      console.error("Error al subir foto:", err);
       alert(
         "Error al subir foto. Asegúrate de haber abierto las reglas de Firebase Storage."
       );
@@ -859,10 +880,9 @@ export default function App() {
     if (acts.length === 0)
       return alert("No hay actividades con dirección guardada hoy.");
     if (acts.length === 1) {
-      const dest = encodeURIComponent(acts[0].address);
-      const url =
-        "https://www.google.com/maps/embed?pb=!1m12!1m8!1m12!1m3!1d1511216.7454228394!2d-72.5!3d41.5!3m2!1i1024!2i768!4f13.1!2m1!1spoints+of+interest!5e0!3m2!1sen!2sus!4v17100000000002" +
-        dest;
+      const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+        acts[0].address
+      )}`;
       return window.open(url, "_blank", "noopener,noreferrer");
     }
     const origin = encodeURIComponent(acts[0].address);
@@ -870,15 +890,8 @@ export default function App() {
     const waypoints = acts
       .slice(1, -1)
       .map((a) => encodeURIComponent(a.address))
-      .join("|");
-    const url =
-      "https://www.google.com/maps/embed?pb=!1m12!1m8!1m12!1m3!1d1511216.7454228394!2d-72.5!3d41.5!3m2!1i1024!2i768!4f13.1!2m1!1spoints+of+interest!5e0!3m2!1sen!2sus!4v17100000000003" +
-      origin +
-      "&destination=" +
-      dest +
-      "&waypoints=" +
-      waypoints +
-      "&travelmode=walking";
+      .join("%7C");
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -888,9 +901,9 @@ export default function App() {
     let targetAct = sortedActivities.find((a) => parseTime(a.time) >= currTime);
     if (!targetAct) targetAct = sortedActivities[0];
     const loc = targetAct?.address || targetAct?.title || day.city;
-    const url =
-      "https://www.google.com/search?q=el+tiempo+por+horas+en+" +
-      encodeURIComponent(loc);
+    const url = `https://www.google.com/search?q=el+tiempo+por+horas+en+${encodeURIComponent(
+      loc
+    )}`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -905,39 +918,302 @@ export default function App() {
     });
   };
 
-  const fetchSugg = async () => {
-    if (AI_API_KEY === "FALTA_CLAVE_IA")
-      return alert("¡Pon tu clave de IA en el código primero!");
+  // ✅ GROQ API (compatible OpenAI): retry con backoff exponencial + timeout + cache + error UI
+  const callGroqWithRetry = async (prompt, maxRetries = 3) => {
+    const url = "https://api.groq.com/openai/v1/chat/completions";
+    const body = JSON.stringify({
+      model: GROQ_MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Eres un asistente de viajes experto. Responde SIEMPRE con JSON puro, sin markdown, sin backticks, sin texto adicional.",
+        },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 1500,
+    });
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      // AbortController con timeout de 25 segundos
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+      try {
+        if (attempt > 0) {
+          const waitMs =
+            Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 1000;
+          setAiStatus(
+            `⏳ Reintentando (${attempt}/${maxRetries})... espera ${Math.ceil(
+              waitMs / 1000
+            )}s`
+          );
+          await new Promise((r) => setTimeout(r, waitMs));
+        } else {
+          setAiStatus("🔗 Conectando con Groq IA...");
+        }
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${GROQ_API_KEY}`,
+          },
+          body,
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        // Si es 429 (rate limit) y quedan reintentos, esperar y reintentar
+        if (res.status === 429 && attempt < maxRetries) {
+          console.warn(
+            `Groq 429 rate limit, reintento ${attempt + 1}/${maxRetries}`
+          );
+          continue;
+        }
+
+        // Errores HTTP específicos
+        if (!res.ok) {
+          const errorBody = await res.text().catch(() => "");
+          if (res.status === 429) {
+            throw new Error("RATE_LIMIT");
+          } else if (res.status === 401) {
+            throw new Error("API_KEY_INVALID");
+          } else if (res.status === 400) {
+            // Comprobar si es un error de modelo deprecado
+            if (errorBody.includes("decommissioned")) {
+              throw new Error("MODEL_DEPRECATED");
+            }
+            throw new Error("BAD_REQUEST");
+          } else if (res.status >= 500) {
+            if (attempt < maxRetries) continue; // reintentar errores del servidor
+            throw new Error("SERVER_ERROR");
+          } else {
+            throw new Error(`HTTP_${res.status}`);
+          }
+        }
+
+        setAiStatus("🧠 Procesando respuesta...");
+        const jsonData = await res.json();
+
+        if (jsonData.error) {
+          throw new Error(jsonData.error.message || "GROQ_ERROR");
+        }
+
+        // Verificar estructura OpenAI-compatible de Groq
+        const content = jsonData.choices?.[0]?.message?.content;
+        if (!content) {
+          if (jsonData.choices?.[0]?.finish_reason === "content_filter") {
+            throw new Error("SAFETY_BLOCK");
+          }
+          throw new Error("EMPTY_RESPONSE");
+        }
+
+        return content;
+      } catch (err) {
+        clearTimeout(timeoutId);
+
+        if (err.name === "AbortError") {
+          if (attempt < maxRetries) continue;
+          throw new Error("TIMEOUT");
+        }
+
+        // Si no es un error reintentable, lanzar directamente
+        if (
+          err.message === "RATE_LIMIT" ||
+          err.message === "API_KEY_INVALID" ||
+          err.message === "BAD_REQUEST" ||
+          err.message === "SAFETY_BLOCK" ||
+          err.message === "EMPTY_RESPONSE" ||
+          err.message === "MODEL_DEPRECATED"
+        ) {
+          throw err;
+        }
+
+        // Error de red: reintentar si quedan intentos
+        if (attempt < maxRetries) {
+          console.warn(`Error de red, reintento ${attempt + 1}:`, err.message);
+          continue;
+        }
+        throw new Error("NETWORK_ERROR");
+      }
+    }
+    throw new Error("MAX_RETRIES");
+  };
+
+  const getErrorMessage = (code) => {
+    const messages = {
+      RATE_LIMIT: {
+        title: "⏱️ Demasiadas solicitudes",
+        desc: 'La API de Groq tiene un límite de peticiones. Espera 30 segundos y pulsa "Nuevas ideas".',
+        canRetry: true,
+      },
+      API_KEY_INVALID: {
+        title: "🔑 Clave API no válida",
+        desc: "La clave de Groq ha caducado o es incorrecta. Contacta con el desarrollador.",
+        canRetry: false,
+      },
+      BAD_REQUEST: {
+        title: "❌ Error en la petición",
+        desc: "Hubo un problema con el formato de la solicitud. Inténtalo de nuevo.",
+        canRetry: true,
+      },
+      SERVER_ERROR: {
+        title: "🔧 Error del servidor de Groq",
+        desc: "Los servidores de Groq están saturados. Inténtalo en unos minutos.",
+        canRetry: true,
+      },
+      MODEL_DEPRECATED: {
+        title: "🤖 Modelo no disponible",
+        desc: "El modelo de IA ha sido retirado. Contacta con el desarrollador para actualizar.",
+        canRetry: false,
+      },
+      TIMEOUT: {
+        title: "⏰ Tiempo de espera agotado",
+        desc: "La conexión tardó demasiado. Revisa tu conexión a internet e inténtalo de nuevo.",
+        canRetry: true,
+      },
+      NETWORK_ERROR: {
+        title: "📡 Error de conexión",
+        desc: "No se pudo conectar con Groq. Revisa tu conexión a internet.",
+        canRetry: true,
+      },
+      SAFETY_BLOCK: {
+        title: "🛡️ Respuesta bloqueada",
+        desc: "La IA filtró la respuesta por seguridad. Inténtalo de nuevo.",
+        canRetry: true,
+      },
+      EMPTY_RESPONSE: {
+        title: "📭 Respuesta vacía",
+        desc: "La IA no generó sugerencias. Inténtalo de nuevo.",
+        canRetry: true,
+      },
+      PARSE_ERROR: {
+        title: "🔄 Error al leer sugerencias",
+        desc: 'La IA devolvió un formato inesperado. Pulsa "Nuevas ideas" para reintentar.',
+        canRetry: true,
+      },
+      MAX_RETRIES: {
+        title: "🔄 Reintentos agotados",
+        desc: "Se intentó varias veces sin éxito. Espera un momento y vuelve a intentarlo.",
+        canRetry: true,
+      },
+    };
+    return (
+      messages[code] || {
+        title: "⚠️ Error inesperado",
+        desc: `Algo salió mal (${code}). Inténtalo de nuevo.`,
+        canRetry: true,
+      }
+    );
+  };
+
+  const fetchSugg = async (forceRefresh = false) => {
+    if (!GROQ_API_KEY) {
+      setAiError(getErrorMessage("API_KEY_INVALID"));
+      return;
+    }
+
+    // Evitar llamadas duplicadas concurrentes
+    if (fetchingRef.current) {
+      console.log("fetchSugg: ya hay una petición en curso, ignorando");
+      return;
+    }
+
+    // Comprobar caché (a menos que se fuerce refresh)
+    const cacheKey = `day_${sel}`;
+    if (!forceRefresh && suggCache[cacheKey]) {
+      console.log("fetchSugg: usando caché para día", sel);
+      setSugg(suggCache[cacheKey]);
+      setAiError(null);
+      return;
+    }
+
+    fetchingRef.current = true;
     setAiLoading(true);
     setSugg(null);
+    setAiError(null);
+    setAiStatus("🔗 Conectando con Groq IA...");
+
     const d = data.dias[sel];
     const list = d.activities.map((a) => `${a.time}: ${a.title}`).join("; ");
+
     try {
-      const prompt = `Viaje familiar (2 adultos, adolescentes 16 y niño 9) a ${
+      const prompt = `Viaje familiar (2 adultos, adolescente de 16 y niño de 9) a ${
         d.city
-      }. Agenda: ${
+      } el ${d.date}. Agenda actual: ${
         list || "nada"
-      }. Sugiere 3 planes y 2 restaurantes familiares baratos. Responde SOLO en JSON válido sin markdown: {"activities":[{"icon":"emoji","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre","time":"hora","desc":"breve","budget":numero,"address":"lugar","link":""}]}`;
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-        }
-      );
-      const jsonStr = await res.json();
-      setSugg(
-        JSON.parse(
-          jsonStr.candidates[0].content.parts[0].text
-            .replace(/```json|```/g, "")
-            .trim()
-        )
-      );
-    } catch {
-      setSugg({ error: true });
+      }. Sugiere 3 actividades y 2 restaurantes familiares económicos que NO estén ya en la agenda. Responde SOLO con JSON puro sin markdown ni backticks: {"activities":[{"icon":"emoji","title":"nombre","time":"hora sugerida","desc":"descripción breve de 1 línea","budget":numero_en_euros,"address":"dirección real","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre real","time":"hora sugerida","desc":"descripción breve","budget":numero_en_euros,"address":"dirección real","link":""}]}`;
+
+      const rawText = await callGroqWithRetry(prompt);
+
+      setAiStatus("🧩 Interpretando sugerencias...");
+
+      // Limpieza robusta del texto de respuesta
+      let cleaned = rawText
+        .replace(/```json\s*/gi, "")
+        .replace(/```\s*/g, "")
+        .replace(/^\s*[\r\n]+/, "")
+        .trim();
+
+      // Intentar extraer JSON si hay texto antes/después
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        cleaned = jsonMatch[0];
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch (parseErr) {
+        console.error(
+          "Error parsing JSON de Groq:",
+          parseErr,
+          "\nTexto recibido:",
+          rawText.substring(0, 500)
+        );
+        throw new Error("PARSE_ERROR");
+      }
+
+      // Validar estructura mínima
+      if (!parsed.activities && !parsed.restaurants) {
+        console.error("Estructura inesperada de Groq:", parsed);
+        throw new Error("PARSE_ERROR");
+      }
+
+      // Normalizar: asegurar que activities y restaurants sean arrays
+      parsed.activities = Array.isArray(parsed.activities)
+        ? parsed.activities
+        : [];
+      parsed.restaurants = Array.isArray(parsed.restaurants)
+        ? parsed.restaurants
+        : [];
+
+      // Limpiar valores de budget por si vienen como string
+      [...parsed.activities, ...parsed.restaurants].forEach((item) => {
+        item.budget = parseFloat(item.budget) || 0;
+        item.icon = item.icon || "🎯";
+        item.link = item.link || "";
+        item.address = item.address || "";
+      });
+
+      setSugg(parsed);
+      setAiError(null);
+
+      // Guardar en caché
+      setSuggCache((prev) => ({ ...prev, [cacheKey]: parsed }));
+    } catch (err) {
+      console.error("Error Groq completo:", err);
+      const errorInfo = getErrorMessage(err.message);
+      setAiError(errorInfo);
+      setSugg(null);
+    } finally {
+      setAiLoading(false);
+      setAiStatus("");
+      fetchingRef.current = false;
     }
-    setAiLoading(false);
   };
 
   if (!data)
@@ -977,7 +1253,6 @@ export default function App() {
   const dayNum = parseInt(day.date.replace(/\D/g, ""), 10);
   const cityKey = day.city.includes("New York") ? "New York" : "Boston";
   const todayWeather = weatherData[`${cityKey}-${dayNum}`];
-
   const sortedActivities = day.activities
     .map((act, index) => ({ ...act, originalIndex: index }))
     .sort((a, b) => parseTime(a.time) - parseTime(b.time));
@@ -1011,7 +1286,7 @@ export default function App() {
         >
           <div>
             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800 }}>
-              🇺🇸 Boston & NY
+              🇺🇸 Boston & New York
             </h1>
             <p style={{ margin: "6px 0 0", opacity: 0.8, fontSize: 16 }}>
               3–11 Abril · Viaje David, Sandra, Inés y Álvaro
@@ -1063,14 +1338,14 @@ export default function App() {
             ["logbook", "📖 Bitácora"],
             ["checklist", "🎒 Maleta"],
             ["budget", "💰 Gastos"],
-            ["suggestions", "✨ Ideas"],
+            ["suggestions", "✨ Ideas IA"],
             ["summary", "🏁 Resumen"],
           ].map(([v, l]) => (
             <button
               key={v}
               onClick={() => {
                 setView(v);
-                if (v === "suggestions" && !sugg) fetchSugg();
+                if (v === "suggestions") fetchSugg(); // usa caché si existe
               }}
               style={{
                 flexShrink: 0,
@@ -1111,7 +1386,7 @@ export default function App() {
                 onClick={() => {
                   setSel(i);
                   setExp(null);
-                  setSugg(null);
+                  // No resetear sugg: el caché lo maneja al cambiar de vista
                 }}
                 style={{
                   flexShrink: 0,
@@ -1438,7 +1713,6 @@ export default function App() {
                         >
                           {a.desc}
                         </p>
-
                         <div
                           data-html2canvas-ignore="true"
                           style={{ margin: "14px 0" }}
@@ -1514,15 +1788,13 @@ export default function App() {
                             </label>
                           )}
                         </div>
-
                         {a.address && (
                           <div style={{ marginBottom: 14 }}>
                             <a
                               data-html2canvas-ignore="true"
-                              href={
-                                "https://www.google.com/maps/embed?pb=!1m12!1m8!1m12!1m3!1d1511216.7454228394!2d-72.5!3d41.5!3m2!1i1024!2i768!4f13.1!2m1!1spoints+of+interest!5e0!3m2!1sen!2sus!4v17100000000004" +
-                                encodeURIComponent(a.address)
-                              }
+                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                                a.address
+                              )}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               style={{
@@ -1898,59 +2170,278 @@ export default function App() {
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
-                marginBottom: 20,
+                marginBottom: 6,
               }}
             >
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: 16,
-                  color: "#4b5563",
-                  fontWeight: 700,
-                }}
-              >
-                Planes recomendados por IA
-              </p>
+              <div>
+                <h3
+                  style={{
+                    margin: "0 0 4px",
+                    fontSize: 20,
+                    fontWeight: 900,
+                    color: "#111827",
+                  }}
+                >
+                  ✨ Ideas para {day.city}
+                </h3>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: 14,
+                    color: "#6b7280",
+                    fontWeight: 600,
+                  }}
+                >
+                  Sugerencias personalizadas por IA
+                </p>
+              </div>
               <button
-                onClick={fetchSugg}
+                onClick={() => fetchSugg(true)}
                 disabled={aiLoading}
                 style={{
-                  background: col,
+                  background: aiLoading ? "#9ca3af" : col,
                   color: "white",
                   border: "none",
-                  borderRadius: 12,
+                  borderRadius: 14,
                   padding: "12px 20px",
-                  fontSize: 16,
+                  fontSize: 15,
                   fontWeight: 900,
+                  cursor: aiLoading ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  opacity: aiLoading ? 0.7 : 1,
+                  transition: "all 0.2s",
                 }}
               >
-                {aiLoading ? "⏳ Pensando..." : "🔄 Buscar ideas"}
+                {aiLoading ? "⏳ Pensando..." : "🔄 Nuevas ideas"}
               </button>
             </div>
-            {sugg?.activities?.map((a, i) => (
-              <SuggCard
-                key={i}
-                act={a}
-                col={col}
-                onAdd={() => {
-                  const nDias = [...data.dias];
-                  nDias[sel].activities.push({ ...a, category: "activity" });
-                  persist({ ...data, dias: nDias });
+
+            {/* Estado de carga con animación */}
+            {aiLoading && (
+              <div
+                style={{
+                  background: "linear-gradient(135deg, #eff6ff, #f0f9ff)",
+                  borderRadius: 16,
+                  padding: "24px",
+                  marginBottom: 16,
+                  marginTop: 14,
+                  textAlign: "center",
+                  border: "2px solid #bfdbfe",
                 }}
-              />
-            ))}
-            {sugg?.restaurants?.map((r, i) => (
-              <SuggCard
-                key={i}
-                act={r}
-                col={col}
-                onAdd={() => {
-                  const nDias = [...data.dias];
-                  nDias[sel].activities.push({ ...r, category: "restaurant" });
-                  persist({ ...data, dias: nDias });
+              >
+                <div
+                  style={{
+                    fontSize: 40,
+                    marginBottom: 12,
+                    animation: "pulse 1.5s infinite",
+                  }}
+                >
+                  🧠
+                </div>
+                <div
+                  style={{
+                    fontSize: 17,
+                    fontWeight: 800,
+                    color: "#1e40af",
+                    marginBottom: 8,
+                  }}
+                >
+                  Generando ideas...
+                </div>
+                <div
+                  style={{ fontSize: 15, color: "#3b82f6", fontWeight: 600 }}
+                >
+                  {aiStatus || "Conectando con Groq IA..."}
+                </div>
+                <div
+                  style={{
+                    marginTop: 14,
+                    height: 4,
+                    background: "#dbeafe",
+                    borderRadius: 4,
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      background: "linear-gradient(90deg, #3b82f6, #1d4ed8)",
+                      borderRadius: 4,
+                      animation: "loading 2s ease-in-out infinite",
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Panel de error visual (no alert) */}
+            {aiError && !aiLoading && (
+              <div
+                style={{
+                  background: aiError.canRetry ? "#fef2f2" : "#fef9ee",
+                  borderRadius: 16,
+                  padding: "20px 24px",
+                  marginBottom: 16,
+                  marginTop: 14,
+                  border: `2px solid ${
+                    aiError.canRetry ? "#fecaca" : "#fde68a"
+                  }`,
                 }}
-              />
-            ))}
+              >
+                <div
+                  style={{
+                    fontSize: 18,
+                    fontWeight: 900,
+                    color: aiError.canRetry ? "#991b1b" : "#92400e",
+                    marginBottom: 8,
+                  }}
+                >
+                  {aiError.title}
+                </div>
+                <p
+                  style={{
+                    margin: "0 0 14px",
+                    fontSize: 15,
+                    color: "#6b7280",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {aiError.desc}
+                </p>
+                {aiError.canRetry && (
+                  <button
+                    onClick={() => fetchSugg(true)}
+                    style={{
+                      background: col,
+                      color: "white",
+                      border: "none",
+                      borderRadius: 12,
+                      padding: "12px 24px",
+                      fontSize: 16,
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      width: "100%",
+                    }}
+                  >
+                    🔄 Reintentar
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Sugerencias de actividades */}
+            {sugg?.activities?.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <h4
+                  style={{
+                    margin: "0 0 12px",
+                    fontSize: 17,
+                    fontWeight: 900,
+                    color: "#374151",
+                  }}
+                >
+                  🎯 Actividades sugeridas
+                </h4>
+                {sugg.activities.map((a, i) => (
+                  <SuggCard
+                    key={`act-${i}`}
+                    act={a}
+                    col={col}
+                    onAdd={() => {
+                      const nDias = [...data.dias];
+                      nDias[sel].activities.push({
+                        ...a,
+                        category: "activity",
+                        done: false,
+                        confirmed: false,
+                      });
+                      persist({ ...data, dias: nDias });
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Sugerencias de restaurantes */}
+            {sugg?.restaurants?.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <h4
+                  style={{
+                    margin: "0 0 12px",
+                    fontSize: 17,
+                    fontWeight: 900,
+                    color: "#374151",
+                  }}
+                >
+                  🍽️ Restaurantes sugeridos
+                </h4>
+                {sugg.restaurants.map((r, i) => (
+                  <SuggCard
+                    key={`rest-${i}`}
+                    act={r}
+                    col={col}
+                    onAdd={() => {
+                      const nDias = [...data.dias];
+                      nDias[sel].activities.push({
+                        ...r,
+                        category: "restaurant",
+                        done: false,
+                        confirmed: false,
+                      });
+                      persist({ ...data, dias: nDias });
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Estado vacío: sin sugerencias y sin error y sin carga */}
+            {!sugg && !aiError && !aiLoading && (
+              <div
+                style={{
+                  textAlign: "center",
+                  padding: "40px 20px",
+                  marginTop: 14,
+                  background: "#f9fafb",
+                  borderRadius: 20,
+                  border: "2px dashed #d1d5db",
+                }}
+              >
+                <div style={{ fontSize: 48, marginBottom: 12 }}>✨</div>
+                <p
+                  style={{
+                    fontSize: 17,
+                    fontWeight: 800,
+                    color: "#374151",
+                    margin: "0 0 8px",
+                  }}
+                >
+                  ¿Necesitas inspiración?
+                </p>
+                <p
+                  style={{ fontSize: 15, color: "#6b7280", margin: "0 0 20px" }}
+                >
+                  Pulsa "Nuevas ideas" para que la IA te sugiera planes
+                </p>
+                <button
+                  onClick={() => fetchSugg(true)}
+                  style={{
+                    background: col,
+                    color: "white",
+                    border: "none",
+                    borderRadius: 14,
+                    padding: "14px 32px",
+                    fontSize: 17,
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  ✨ Generar ideas para {day.city}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -2496,6 +2987,15 @@ export default function App() {
       )}
 
       <style>{`
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.15); opacity: 0.8; }
+        }
+        @keyframes loading {
+          0% { width: 0%; margin-left: 0; }
+          50% { width: 60%; margin-left: 20%; }
+          100% { width: 0%; margin-left: 100%; }
+        }
         @media print {
           body { background: white !important; margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .hide-on-print, .app-header-nav, .day-selector-nav { display: none !important; }
