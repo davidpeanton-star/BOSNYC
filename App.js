@@ -143,6 +143,50 @@ function saveLocal(data) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Copia de seguridad manual: descargar/cargar todo (diario, fotos, tracks)
+// como un único archivo .json que el usuario guarda donde quiera (p. ej. su
+// carpeta de OneDrive) — no depende del navegador ni de ninguna cuenta.
+// ───────────────────────────────────────────────────────────────────────────
+function exportBackupFile({ diary, gpx, walk }) {
+  const payload = {
+    version: 1,
+    app: "camino-sanabres-2026",
+    exportedAt: new Date().toISOString(),
+    diary,
+    gpx,
+    walk,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "camino-sanabres-copia.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function parseBackupFile(file) {
+  let text;
+  try {
+    text = await file.text();
+  } catch {
+    throw new Error("No se ha podido leer el archivo.");
+  }
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("Este archivo no parece una copia válida de la app (no es un JSON legible).");
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("Este archivo no parece una copia válida de la app.");
+  }
+  return data;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Datos del Camino Sanabrés — Ourense → Santiago de Compostela (6 etapas, ~109 km)
 // Coordenadas de pueblos: aproximadas (centro del núcleo urbano), suficientes
 // para el mapa general. Para navegación fiable metro a metro, sube el GPX
@@ -1245,10 +1289,17 @@ async function generateDiaryPDF(diary) {
   docPdf.save("diario-camino-sanabres.pdf");
 }
 
-function DiarioView({ diary }) {
+function DiarioView({ diary, onExport, onImportFile }) {
   const daysWithContent = STAGES.filter(
     (s) => diary[s.id] && (diary[s.id].text || (diary[s.id].photos || []).length)
   );
+
+  const handleImportChange = (e) => {
+    const file = e.target.files[0];
+    if (file) onImportFile(file);
+    e.target.value = "";
+  };
+
   return (
     <div>
       <div className="cs-card">
@@ -1261,6 +1312,24 @@ function DiarioView({ diary }) {
           📄 Exportar diario completo a PDF
         </button>
       </div>
+
+      <div className="cs-card">
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>☁️ Copia de seguridad</h3>
+        <p style={{ fontSize: 13, color: "#6b5c48", lineHeight: 1.5 }}>
+          Descarga aquí una copia de todo lo tuyo (diario, fotos y tracks GPX) en un único archivo. Guárdala donde
+          quieras — por ejemplo tu carpeta de OneDrive del móvil, eligiéndolo al guardar — para no depender solo de
+          este navegador. Si cambias de móvil, borras datos o quieres recuperarlo, usa "Cargar copia" y elige ese
+          mismo archivo.
+        </p>
+        <div className="cs-row">
+          <button className="cs-btn" onClick={onExport}>⬇️ Descargar copia (JSON)</button>
+          <label className="cs-btn secondary" style={{ cursor: "pointer" }}>
+            ⬆️ Cargar copia desde archivo
+            <input type="file" accept="application/json" onChange={handleImportChange} style={{ display: "none" }} />
+          </label>
+        </div>
+      </div>
+
       {daysWithContent.length === 0 && (
         <div className="cs-card"><div className="cs-empty">Aún no has escrito nada — ve a una etapa y abre "Mi diario".</div></div>
       )}
@@ -1498,6 +1567,27 @@ export default function App() {
     });
   };
 
+  const handleExportClick = () => {
+    exportBackupFile({ diary, gpx, walk });
+  };
+
+  const importBackup = async (file) => {
+    let data;
+    try {
+      data = await parseBackupFile(file);
+    } catch (e) {
+      alert(e.message || "No se ha podido leer la copia.");
+      return;
+    }
+    const ok = window.confirm(
+      "Esto sustituirá el diario, las fotos y los tracks guardados ahora en este dispositivo por el contenido del archivo. ¿Continuar?"
+    );
+    if (!ok) return;
+    setDiary(data.diary || {});
+    setGpx(data.gpx || {});
+    setWalk(data.walk || {});
+  };
+
   const tabs = [
     { key: "resumen", label: "🏠 Resumen" },
     ...STAGES.map((s) => ({ key: `stage-${s.id}`, label: `${s.id}. ${s.to.split(" ")[0]}` })),
@@ -1525,7 +1615,7 @@ export default function App() {
       </div>
       <div className="cs-content">
         {activeTab === "resumen" && <ResumenView onGoStage={setActiveTab} />}
-        {activeTab === "diario" && <DiarioView diary={diary} />}
+        {activeTab === "diario" && <DiarioView diary={diary} onExport={handleExportClick} onImportFile={importBackup} />}
         {STAGES.filter((s) => activeTab === `stage-${s.id}`).map((stage) => (
           <StageView
             key={stage.id}
