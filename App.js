@@ -374,6 +374,147 @@ const OURENSE_ALBERGUE_SALIDA = {
 };
 
 // ───────────────────────────────────────────────────────────────────────────
+// Ayuda IA — asistente conversacional con geolocalización
+// El peregrino escribe "me he perdido", "busco un bar cerca", "me duele el
+// pie"... y recibe una respuesta apoyada en su posición GPS real y en los
+// puntos de interés (albergues, restaurantes, pueblos) ya verificados de la
+// app — la IA no inventa nombres/teléfonos, solo los usa o dice que no sabe.
+// ───────────────────────────────────────────────────────────────────────────
+const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODEL = "llama-3.3-70b-versatile";
+const AI_KEY_LS = "camino_sanabres_2026_groq_key";
+
+function loadAiKey() {
+  try {
+    return localStorage.getItem(AI_KEY_LS) || "";
+  } catch {
+    return "";
+  }
+}
+function saveAiKey(k) {
+  try {
+    if (k) localStorage.setItem(AI_KEY_LS, k);
+    else localStorage.removeItem(AI_KEY_LS);
+  } catch {
+    // localStorage no disponible: la key solo dura la sesión en memoria
+  }
+}
+
+function normalizeTxt(s) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+let _poiIndexCache = null;
+function buildPOIIndex() {
+  if (_poiIndexCache) return _poiIndexCache;
+  const townCoords = {};
+  STAGES.forEach((s) => s.waypoints.forEach((w) => { townCoords[normalizeTxt(w.name)] = { lat: w.lat, lon: w.lon }; }));
+  townCoords[normalizeTxt("Ourense")] = { lat: 42.3358, lon: -7.8639 };
+  townCoords[normalizeTxt("Santiago de Compostela")] = { lat: 42.8805, lon: -8.5456 };
+
+  const keys = Object.keys(townCoords);
+  function findCoords(town, fallback) {
+    const n = normalizeTxt(town);
+    const key = keys.find((k) => k.length > 2 && (n.includes(k) || k.includes(n)));
+    return key ? townCoords[key] : fallback;
+  }
+
+  const pois = [];
+  STAGES.forEach((stage) => {
+    const fallback = stage.waypoints[stage.waypoints.length - 1];
+    stage.waypoints.forEach((w) => pois.push({ name: w.name, type: "Punto del camino", lat: w.lat, lon: w.lon, stageId: stage.id }));
+    stage.albergues.forEach((a) => {
+      const c = findCoords(a.town, fallback);
+      pois.push({ name: a.name, type: "Albergue (" + a.type + ")", lat: c.lat, lon: c.lon, phone: a.phone, address: a.address, price: a.price, stageId: stage.id });
+    });
+    stage.restaurants.forEach((r) => {
+      const c = findCoords(r.town, fallback);
+      pois.push({ name: r.name, type: "Restaurante/bar", lat: c.lat, lon: c.lon, phone: r.phone, note: r.note, stageId: stage.id });
+    });
+  });
+  pois.push({ name: OURENSE_ALBERGUE_SALIDA.name, type: "Albergue", lat: 42.3358, lon: -7.8639, phone: OURENSE_ALBERGUE_SALIDA.phone, address: OURENSE_ALBERGUE_SALIDA.address });
+  pois.push({ name: "Oficina del Peregrino (Compostela)", type: "Oficina", lat: 42.8805, lon: -8.5456, phone: OFICINA_PEREGRINO.phone, address: OFICINA_PEREGRINO.address });
+  _poiIndexCache = pois;
+  return pois;
+}
+
+function nearestPOIs(lat, lon, n = 6) {
+  return buildPOIIndex()
+    .map((p) => ({ ...p, dist: haversine(lat, lon, p.lat, p.lon), brg: bearing(lat, lon, p.lat, p.lon) }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, n);
+}
+
+function buildAiSystemPrompt(currentStage, pos) {
+  let loc = "No se ha podido obtener la ubicación GPS del peregrino — pide que la active o responde de forma más general.";
+  let poiText = "";
+  if (pos) {
+    loc = `Ubicación GPS actual: lat ${pos.lat.toFixed(5)}, lon ${pos.lon.toFixed(5)} (precisión ±${Math.round(pos.accuracy || 0)} m).`;
+    const near = nearestPOIs(pos.lat, pos.lon, 6);
+    poiText =
+      "Puntos de interés REALES más cercanos a su posición actual, ordenados por distancia (única fuente de verdad — usa estos nombres/teléfonos/direcciones tal cual, NO inventes otros lugares, teléfonos ni direcciones distintas de esta lista):\n" +
+      near
+        .map((p, i) => `${i + 1}. ${p.name} — ${p.type} — a ${formatDist(p.dist)} hacia ${compassLabel(p.brg)}${p.phone ? ` — tel: ${p.phone}` : ""}${p.address ? ` — ${p.address}` : ""}`)
+        .join("\n");
+  }
+  const stageText = currentStage
+    ? `Etapa seleccionada ahora mismo en la app: Etapa ${currentStage.id} (${currentStage.from} → ${currentStage.to}, ${currentStage.km} km, ${currentStage.date}).`
+    : "El peregrino no tiene ninguna etapa concreta abierta ahora mismo.";
+
+  return `Eres el asistente de una app para un peregrino que está caminando ahora mismo el Camino Sanabrés (Ourense → Santiago de Compostela), del 18 al 23 de agosto de 2026.
+${stageText}
+${loc}
+${poiText}
+
+Instrucciones:
+- Responde siempre en español, breve (máximo 4-5 frases salvo que de verdad haga falta más), cercano y práctico, como un compañero de camino con experiencia.
+- Si el peregrino describe una urgencia médica seria, un accidente o un peligro real, dile PRIMERO que llame al 112 (emergencias en España) antes de nada más.
+- Si pregunta dónde ir, qué hay cerca, o busca un albergue/bar/restaurante, usa exclusivamente los puntos de interés listados arriba (nombre, distancia, rumbo, teléfono). Si ninguno encaja con lo que pide, dilo con honestidad en vez de inventar un sitio.
+- No tienes acceso a datos meteorológicos ni de tráfico en tiempo real: si preguntan por el tiempo actual, dilo claramente y sugiere consultar AEMET o una app de tiempo.
+- Para dolores o molestias (ampollas, rodillas, etc.) da consejos prácticos generales de peregrino, dejando claro que no sustituye a un profesional sanitario si el dolor es fuerte o no mejora.
+- Si no tienes su ubicación GPS, pide que la active desde el botón "Actualizar mi ubicación" del panel, o responde de forma más general sin inventar distancias.`;
+}
+
+async function askAi(apiKey, systemPrompt, history, userMessage) {
+  const messages = [
+    { role: "system", content: systemPrompt },
+    ...history.map((h) => ({ role: h.role, content: h.content })),
+    { role: "user", content: userMessage },
+  ];
+  let res;
+  try {
+    res = await fetch(GROQ_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ model: GROQ_MODEL, messages, temperature: 0.4, max_tokens: 500 }),
+    });
+  } catch {
+    throw new Error("No hay conexión a internet ahora mismo. Inténtalo cuando tengas cobertura o wifi.");
+  }
+  if (!res.ok) {
+    if (res.status === 401) throw new Error("La clave de IA no es válida. Revísala en Ajustes.");
+    if (res.status === 429) throw new Error("Se ha alcanzado el límite de peticiones gratuitas por ahora. Prueba en un minuto.");
+    throw new Error("No se ha podido contactar con la IA (error " + res.status + ").");
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content?.trim() || "No he sabido responder a eso.";
+}
+
+const AI_SUGGESTIONS = [
+  "🆘 Me he perdido, ¿qué hago?",
+  "🛏️ ¿Cuál es el albergue más cercano?",
+  "🍽️ Busco un bar o restaurante cerca",
+  "🩹 Me duele el pie, ¿algún consejo?",
+  "📞 Dame el teléfono del sitio más cercano para llamar",
+];
+
+// ───────────────────────────────────────────────────────────────────────────
 // Estilos globales (inyectados una vez)
 // ───────────────────────────────────────────────────────────────────────────
 const GLOBAL_CSS = `
@@ -418,6 +559,23 @@ const GLOBAL_CSS = `
   .cs-gpsgrid { display:grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin-top:6px; }
   .cs-gpsgrid div b { display:block; font-size:15px; }
   .emoji-marker { text-align:center; }
+
+  .cs-ai-fab { position: fixed; right: 18px; bottom: 22px; width: 56px; height: 56px; border-radius: 50%; background: #1a73e8; color: #fff; border: none; font-size: 26px; box-shadow: 0 3px 10px rgba(0,0,0,.3); cursor: pointer; z-index: 50; }
+  .cs-ai-overlay { position: fixed; inset: 0; background: rgba(30,20,10,.45); z-index: 60; display: flex; align-items: flex-end; justify-content: center; }
+  .cs-ai-panel { width: 100%; max-width: 640px; height: 82vh; background: #fdf9f2; border-radius: 18px 18px 0 0; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 -4px 20px rgba(0,0,0,.25); }
+  .cs-ai-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; background: #7a4b2a; color: #fff; }
+  .cs-ai-emergency { background: #fdecea; color: #c0392b; font-size: 12.5px; font-weight: 600; padding: 7px 14px; }
+  .cs-ai-emergency a { color: #c0392b; }
+  .cs-ai-keyform { background: #fff8e8; padding: 10px 14px; border-bottom: 1px solid #eee1cf; }
+  .cs-ai-keyinput { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1.5px solid #e4d5bd; font-size: 13px; min-width: 0; }
+  .cs-ai-messages { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .cs-ai-chips { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+  .cs-ai-bubble { max-width: 85%; padding: 9px 12px; border-radius: 14px; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; }
+  .cs-ai-bubble.me { align-self: flex-end; background: #7a4b2a; color: #fff; border-bottom-right-radius: 3px; }
+  .cs-ai-bubble.ai { align-self: flex-start; background: #fff; border: 1px solid #eee1cf; border-bottom-left-radius: 3px; }
+  .cs-ai-bubble.error { align-self: center; background: #fdecea; color: #c0392b; }
+  .cs-ai-inputrow { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid #eee1cf; background: #fff; }
+  .cs-ai-inputrow input { flex: 1; padding: 10px 12px; border-radius: 20px; border: 1.5px solid #e4d5bd; font-size: 14px; min-width: 0; }
 `;
 
 function injectGlobalStyles() {
@@ -1126,6 +1284,160 @@ function DiarioView({ diary }) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Panel de Ayuda IA (geolocalizado)
+// ───────────────────────────────────────────────────────────────────────────
+function AiHelpPanel({ open, onClose, currentStage }) {
+  const [apiKey, setApiKey] = useState(loadAiKey());
+  const [keyInput, setKeyInput] = useState("");
+  const [showKeyForm, setShowKeyForm] = useState(!loadAiKey());
+  const [pos, setPos] = useState(null);
+  const [locStatus, setLocStatus] = useState("idle");
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const scrollRef = useRef(null);
+
+  const refreshLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setLocStatus("error");
+      return;
+    }
+    setLocStatus("loading");
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        setPos({ lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy });
+        setLocStatus("ok");
+      },
+      () => setLocStatus("error"),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+  }, []);
+
+  useEffect(() => {
+    if (open) refreshLocation();
+  }, [open, refreshLocation]);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, loading]);
+
+  const saveKey = () => {
+    if (!keyInput.trim()) return;
+    saveAiKey(keyInput.trim());
+    setApiKey(keyInput.trim());
+    setShowKeyForm(false);
+    setKeyInput("");
+  };
+
+  const send = async (text) => {
+    const msg = (text ?? input).trim();
+    if (!msg || loading) return;
+    if (!apiKey) {
+      setShowKeyForm(true);
+      return;
+    }
+    setError("");
+    setInput("");
+    const history = messages.slice(-6);
+    setMessages((m) => [...m, { role: "user", content: msg }]);
+    setLoading(true);
+    try {
+      const sys = buildAiSystemPrompt(currentStage, pos);
+      const reply = await askAi(apiKey, sys, history, msg);
+      setMessages((m) => [...m, { role: "assistant", content: reply }]);
+    } catch (e) {
+      setError(e.message || "Error al preguntar a la IA.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="cs-ai-overlay" onClick={onClose}>
+      <div className="cs-ai-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="cs-ai-header">
+          <div>
+            <b>🤖 Ayuda IA</b>
+            <div style={{ fontSize: 11.5, opacity: 0.85 }}>
+              {locStatus === "ok" && pos
+                ? `📍 Ubicación OK (±${Math.round(pos.accuracy)} m)`
+                : locStatus === "loading"
+                ? "📍 Obteniendo tu ubicación…"
+                : locStatus === "error"
+                ? "📍 Sin ubicación (puedes preguntar igualmente)"
+                : ""}
+            </div>
+          </div>
+          <div className="cs-row" style={{ gap: 6 }}>
+            <button className="cs-btn secondary" style={{ padding: "5px 9px", fontSize: 11.5 }} onClick={refreshLocation}>📍</button>
+            <button className="cs-btn secondary" style={{ padding: "5px 9px", fontSize: 11.5 }} onClick={() => setShowKeyForm((v) => !v)}>⚙️</button>
+            <button className="cs-btn secondary" style={{ padding: "5px 9px", fontSize: 11.5 }} onClick={onClose}>✕</button>
+          </div>
+        </div>
+
+        <div className="cs-ai-emergency">
+          🆘 Si es una urgencia real, llama primero al <a href="tel:112">112</a>
+        </div>
+
+        {showKeyForm && (
+          <div className="cs-ai-keyform">
+            <p style={{ fontSize: 12.5, margin: "0 0 6px" }}>
+              Para usar la IA necesitas una clave gratuita de Groq: entra en{" "}
+              <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">console.groq.com/keys</a>,
+              crea una cuenta gratis y copia tu clave (empieza por "gsk_"). Se guarda solo en este móvil y solo se
+              envía a Groq para responderte, nunca a ningún otro sitio.
+            </p>
+            <div className="cs-row">
+              <input className="cs-ai-keyinput" placeholder="gsk_..." value={keyInput} onChange={(e) => setKeyInput(e.target.value)} />
+              <button className="cs-btn" onClick={saveKey}>Guardar</button>
+              {apiKey && (
+                <button className="cs-btn secondary" onClick={() => setShowKeyForm(false)}>Cancelar</button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="cs-ai-messages" ref={scrollRef}>
+          {messages.length === 0 && !showKeyForm && (
+            <div className="cs-ai-chips">
+              {AI_SUGGESTIONS.map((s) => (
+                <button key={s} className="cs-sec-btn" onClick={() => send(s.replace(/^\S+\s/, ""))}>{s}</button>
+              ))}
+            </div>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={"cs-ai-bubble " + (m.role === "user" ? "me" : "ai")}>{m.content}</div>
+          ))}
+          {loading && <div className="cs-ai-bubble ai">Pensando…</div>}
+          {error && <div className="cs-ai-bubble error">{error}</div>}
+        </div>
+
+        <div className="cs-ai-inputrow">
+          <input
+            placeholder="Escribe tu pregunta…"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") send();
+            }}
+          />
+          <button className="cs-btn" onClick={() => send()} disabled={loading}>➤</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AiHelpButton({ onClick }) {
+  return (
+    <button className="cs-ai-fab" onClick={onClick} aria-label="Ayuda IA">🤖</button>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // App principal
 // ───────────────────────────────────────────────────────────────────────────
 export default function App() {
@@ -1134,6 +1446,7 @@ export default function App() {
   const [gpx, setGpx] = useState({});
   const [walk, setWalk] = useState({});
   const [syncedOnce, setSyncedOnce] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
 
   useEffect(() => {
     injectGlobalStyles();
@@ -1191,6 +1504,8 @@ export default function App() {
     { key: "diario", label: "📔 Diario" },
   ];
 
+  const currentStageForAi = STAGES.find((s) => activeTab === `stage-${s.id}`) || null;
+
   return (
     <div className="cs-app">
       <div className="cs-header">
@@ -1224,6 +1539,8 @@ export default function App() {
           />
         ))}
       </div>
+      <AiHelpButton onClick={() => setAiOpen(true)} />
+      <AiHelpPanel open={aiOpen} onClose={() => setAiOpen(false)} currentStage={currentStageForAi} />
     </div>
   );
 }
