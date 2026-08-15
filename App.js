@@ -1,10 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore, doc, onSnapshot, setDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import html2canvas from "html2canvas";
+import jsPDF from "jspdf";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
-// 👇 TUS DATOS DE FIREBASE CONFIGURADOS 👇
+// ───────────────────────────────────────────────────────────────────────────
+// Firebase (mismo proyecto que el resto de apps del usuario; se usa un
+// documento y una carpeta de Storage propios para no mezclar datos)
+// ───────────────────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyDfjxzkymYvxK6Dtuu_OTAHB3Cj3Z8iRlk",
   authDomain: "viaje-usa-54b2f.firebaseapp.com",
@@ -15,2995 +20,1210 @@ const firebaseConfig = {
   measurementId: "G-DBRNDPWLPB",
 };
 
-// 👇 TU CLAVE DE GROQ 👇
-const GROQ_API_KEY = "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";
-const GROQ_MODEL = "llama-3.3-70b-versatile";
-
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const storage = getStorage(app);
-const TRIP_DOC = doc(db, "viajes", "viaje_definitivo_2026");
+const TRIP_DOC = doc(db, "caminos", "sanabres_ourense_santiago_2026");
+const LS_KEY = "camino_sanabres_2026_v1";
 
-const ICONS = [
-  "🏨",
-  "✈️",
-  "🚗",
-  "🗺️",
-  "🍽️",
-  "🍕",
-  "🦞",
-  "🏀",
-  "🗽",
-  "🔭",
-  "🎓",
-  "🌳",
-  "🌊",
-  "🎭",
-  "🛒",
-  "🌅",
-  "🏛️",
-  "🚶",
-  "🛍️",
-  "🎨",
-  "🌃",
-  "🌉",
-  "🏙️",
-  "📸",
-  "🥩",
-  "☕",
-  "🎵",
-  "🎬",
-  "🏆",
-  "🚇",
-  "🎉",
-  "🌆",
-  "🍣",
-  "🎪",
-  "⛵",
-  "🏟️",
-  "🌇",
-  "🍜",
-  "🥗",
-  "🖼️",
-  "🎠",
-  "🍦",
-  "🎡",
-  "🧁",
-  "🥐",
-  "⚾",
-  "🦁",
-  "🍺",
-  "🚢",
-  "🎻",
-  "🌮",
-  "🔬",
-  "🏡",
-  "🌉",
-  "🎯",
-];
+// ───────────────────────────────────────────────────────────────────────────
+// Utilidades
+// ───────────────────────────────────────────────────────────────────────────
+const toRad = (d) => (d * Math.PI) / 180;
+const toDeg = (r) => (r * 180) / Math.PI;
 
-const CAT = {
-  activity: { label: "Actividad", bg: "#e8f4fd", col: "#1a73e8" },
-  restaurant: { label: "Restaurante", bg: "#fef6e4", col: "#e67e22" },
-  hotel: { label: "Alojamiento", bg: "#e8f8f5", col: "#27ae60" },
-  transport: { label: "Transporte", bg: "#fde8e8", col: "#e74c3c" },
-};
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
 
-const parseTime = (t) => {
-  if (!t) return 9999;
-  const str = t.toLowerCase();
-  if (str.includes("mañana")) return 800;
-  if (str.includes("mediodía") || str.includes("mediodia")) return 1300;
-  if (str.includes("tarde")) return 1700;
-  if (str.includes("noche")) return 2000;
-  const match = str.match(/(\d{1,2})[:h\.]?(\d{2})?/);
-  if (match) {
-    let h = parseInt(match[1]);
-    let m = parseInt(match[2] || 0);
-    if (str.includes("pm") && h < 12) h += 12;
-    return h * 100 + m;
+function bearing(lat1, lon1, lat2, lon2) {
+  const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+  const x =
+    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function formatDist(m) {
+  if (m == null || isNaN(m)) return "—";
+  if (m < 1000) return `${Math.round(m)} m`;
+  return `${(m / 1000).toFixed(m < 10000 ? 2 : 1)} km`;
+}
+
+const COMPASS_DIRS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"];
+function compassLabel(deg) {
+  return COMPASS_DIRS[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+}
+
+function trackLengthFrom(points, idx) {
+  let d = 0;
+  for (let i = idx; i < points.length - 1; i++) {
+    d += haversine(points[i].lat, points[i].lon, points[i + 1].lat, points[i + 1].lon);
   }
-  return 9999;
-};
+  return d;
+}
 
-const getDayColor = (city, label) => {
-  if (label.includes("Vuelta")) return "#e74c3c";
-  if (city === "Boston") return "#27ae60";
-  if (city === "New York") return "#1a365d";
-  if (city.includes("Boston → New York")) return "#e67e22";
-  return "#1a73e8";
-};
+function nearestPointIndex(points, lat, lon) {
+  let best = 0;
+  let bestD = Infinity;
+  points.forEach((p, i) => {
+    const d = haversine(lat, lon, p.lat, p.lon);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  return { idx: best, dist: bestD };
+}
 
-const INIT_CHECKLIST = [
-  { id: 1, text: "Pasaportes y ESTA impresos", done: false },
-  { id: 2, text: "Adaptadores de enchufe (Clavija plana)", done: false },
-  { id: 3, text: "Abrigos / Chubasqueros (Clima Boston)", done: false },
-  { id: 4, text: "Entradas Celtics en el móvil", done: false },
-  { id: 5, text: "Billetes de avión confirmados", done: false },
-];
+function resizeImageFile(file, maxDim = 1100, quality = 0.62) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > maxDim) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else if (height >= width && height > maxDim) {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
-const INIT_DAYS = [
+function parseGPX(text) {
+  try {
+    const xml = new DOMParser().parseFromString(text, "text/xml");
+    let nodes = Array.from(xml.getElementsByTagName("trkpt"));
+    if (!nodes.length) nodes = Array.from(xml.getElementsByTagName("rtept"));
+    return nodes
+      .map((p) => ({
+        lat: parseFloat(p.getAttribute("lat")),
+        lon: parseFloat(p.getAttribute("lon")),
+      }))
+      .filter((p) => !isNaN(p.lat) && !isNaN(p.lon));
+  } catch {
+    return [];
+  }
+}
+
+function loadLocal() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : { diary: {}, gpx: {}, walk: {} };
+  } catch {
+    return { diary: {}, gpx: {}, walk: {} };
+  }
+}
+function saveLocal(data) {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn("No se pudo guardar en localStorage (quizá lleno):", e);
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Datos del Camino Sanabrés — Ourense → Santiago de Compostela (6 etapas, ~109 km)
+// Coordenadas de pueblos: aproximadas (centro del núcleo urbano), suficientes
+// para el mapa general. Para navegación fiable metro a metro, sube el GPX
+// real de cada etapa (botón "Subir track GPX" dentro del mapa).
+// ───────────────────────────────────────────────────────────────────────────
+const STAGES = [
   {
-    date: "Vie 3 Abril",
-    city: "Boston",
-    emoji: "✈️",
-    label: "Llegada a Boston",
-    color: "#27ae60",
-    activities: [
-      {
-        time: "Tarde",
-        icon: "🏨",
-        title: "Check-in en Cambridge",
-        desc: "Hotel en Cambridge, barrio universitario con ambiente estudiantil vibrante.",
-        confirmed: false,
-        done: false,
-        budget: 0,
-        link: "",
-        address: "Cambridge, Boston, MA",
-        category: "hotel",
-      },
-      {
-        time: "Tarde",
-        icon: "🚶",
-        title: "Paseo por Harvard Square",
-        desc: "Primera toma de contacto. Tiendas, cafeterías y el icónico ambiente de la zona.",
-        confirmed: false,
-        done: false,
-        budget: 0,
-        link: "",
-        address: "Harvard Square, Cambridge, MA",
-        category: "activity",
-      },
-      {
-        time: "Noche",
-        icon: "🍽️",
-        title: "Cena en Cambridge",
-        desc: "The Harvest o algo informal en Harvard Square. Cocina americana de calidad.",
-        confirmed: false,
-        done: false,
-        budget: 80,
-        link: "https://www.harvestrestaurant.com",
-        address: "44 Brattle St, Cambridge, MA",
-        category: "restaurant",
-      },
+    id: 1,
+    date: "Martes 18 agosto 2026",
+    from: "Ourense",
+    to: "San Cristovo de Cea",
+    km: 21.2,
+    difficulty: "Alta (3/5) — subida constante",
+    desnivel: "Sube de ~115 m (Ourense) a ~525 m (Cea): +611 m / −231 m aprox.",
+    description:
+      "Primera etapa y una de las más exigentes de todo el Sanabrés: sale de Ourense por la Ponte Vella cruzando el Miño y empieza a ganar altura casi sin descanso, dejando el valle para subir a la Dorsal Galega. Hay dos variantes que confluyen en Casas Novas, antes de Cea: por Tamallancos (oficial, menos asfalto, pasa por Soutelo, Cudeiro, Bouzas, Sobreira, Faramontaos) o por Canedo (1,1 km más corta, sale por el Puente Romano). Cea es el núcleo grande de la etapa: todos los servicios, y sobre todo su famoso Pan de Cea con IGP (Indicación Geográfica Protegida), horneado en hornos de leña desde el siglo XIII — imprescindible comprarlo para el camino.",
+    variants: [
+      { name: "Variante por Tamallancos (oficial)", note: "Más pista y camino real empedrado, menos asfalto que por Canedo." },
+      { name: "Variante por Canedo", note: "1,1 km más corta, sale por el Puente Romano, algo más de asfalto." },
+    ],
+    waypoints: [
+      { name: "Ourense (Ponte Vella)", lat: 42.3358, lon: -7.8639, type: "start" },
+      { name: "Tamallancos", lat: 42.374, lon: -7.946, type: "town" },
+      { name: "Faramontaos", lat: 42.407, lon: -8.021, type: "town" },
+      { name: "San Cristovo de Cea", lat: 42.43, lon: -8.07, type: "end" },
+    ],
+    albergues: [
+      { name: "Albergue de Peregrinos de Cea \"Casa das Netas\"", type: "Público (Xunta)", town: "San Cristovo de Cea", address: "Rúa Santo Cristo, 5 (a 60 m del Camino)", phone: "600 878 289", price: "8 €", reserva: "No admite reserva — 24 plazas, registro 13:00, cierre 22:00", link: "" },
+      { name: "Alojamiento Pazos (casa rural)", type: "Privado", town: "A 2 km de San Cristovo de Cea", address: "", phone: "", price: "Precio especial peregrinos (no confirmado)", reserva: "Consultar disponibilidad", link: "https://www.escapadarural.com/casas-rurales/san-cristovo-de-cea" },
+      { name: "Casa Cea Ourense", type: "Privado (hotel/hostal)", town: "San Cristovo de Cea", address: "", phone: "", price: "45–82 € aprox. (rango orientativo, no confirmado)", reserva: "Consultar", link: "" },
+    ],
+    restaurants: [
+      { name: "Forno do Carlos", town: "Faramontaos, 9 (Cea)", note: "Pan de Cea IGP, horno de leña tradicional, varias generaciones. Abierto 9:00–21:00 todos los días", phone: "988 282 279" },
+      { name: "Forno da Rosa", town: "San Cristovo de Cea", note: "Pan de Cea 100% IGP, elaboración artesanal certificada", phone: "" },
     ],
   },
   {
-    date: "Sáb 4 Abril",
-    city: "Boston",
-    emoji: "🏛️",
-    label: "Boston histórico",
-    color: "#27ae60",
-    activities: [
+    id: 2,
+    date: "Miércoles 19 agosto 2026",
+    from: "San Cristovo de Cea",
+    to: "Castro Dozón",
+    km: 14.5,
+    difficulty: "Media",
+    desnivel: "Etapa corta con altibajos constantes; sube hacia el Alto de Santo Domingo (~700 m)",
+    description:
+      "La etapa más corta de las seis y una de las más bonitas del Sanabrés: mayoritariamente bosque y monte, pistas y sendas, con muy poco asfalto. Dos variantes que confluyen en Castro Dozón: la oficial/corta por Piñor-Cotelas (~14,5 km), o la más larga por el Monasterio de Santa María de Oseira (+4,3 km, ~19 km total) — uno de los cistercienses más bellos de Galicia, con posibilidad de dormir en su propio albergue si se hace tarde. Castro Dozón (O Castro) es la capital del municipio de Dozón.",
+    variants: [
+      { name: "Oficial por Piñor (Cotelas)", note: "~14,5 km, más directa. Bar-tienda O Refugio en Cotelas (km ~5)." },
+      { name: "Por Monasterio de Oseira", note: "~19 km. Pasa por Silvaboa y Pieles (subida dura, 1,3 km al 6%) hasta el monasterio; posibilidad de alojarse allí." },
+    ],
+    waypoints: [
+      { name: "San Cristovo de Cea", lat: 42.43, lon: -8.07, type: "start" },
+      { name: "Cotelas", lat: 42.463, lon: -8.075, type: "town" },
+      { name: "Castro Dozón (O Castro)", lat: 42.5835, lon: -8.0464, type: "end" },
+    ],
+    albergues: [
       {
-        time: "Mañana",
-        icon: "🎓",
-        title: "Harvard University",
-        desc: "Visita al campus: Harvard Yard, Memorial Hall y museo Peabody.",
-        confirmed: false,
-        done: false,
-        budget: 20,
-        link: "https://www.harvard.edu/visitors/",
-        address: "Harvard Yard, Cambridge, MA",
-        category: "activity",
-      },
-      {
-        time: "Mañana",
-        icon: "🔬",
-        title: "MIT – Campus rápido",
-        desc: "A 10 min andando de Harvard. El Gehry Building es muy fotogénico.",
-        confirmed: false,
-        done: false,
-        budget: 0,
-        link: "https://www.mit.edu",
-        address: "77 Massachusetts Ave, Cambridge",
-        category: "activity",
-      },
-      {
-        time: "Tarde",
-        icon: "🗺️",
-        title: "Freedom Trail",
-        desc: "Ruta histórica de 4 km marcada en rojo. 16 monumentos históricos.",
-        confirmed: false,
-        done: false,
-        budget: 0,
-        link: "https://www.thefreedomtrail.org",
-        address: "Boston Common, Boston, MA",
-        category: "activity",
-      },
-      {
-        time: "Noche",
-        icon: "🦞",
-        title: "Cena en North End",
-        desc: "Barrio italiano de Boston. Mariscos y pasta auténtica. Probar Mamma Maria.",
-        confirmed: false,
-        done: false,
-        budget: 100,
+        name: "⚠️ Albergue Municipal de Castro Dozón — CERRADO en 2026",
+        type: "Público (Concello de Dozón)",
+        town: "O Castro, Dozón",
+        address: "Ctra. N-525, s/n (junto a las piscinas municipales)",
+        phone: "986 780 471",
+        price: "—",
+        reserva:
+          "Cerrado desde 2023/2024. La Xunta confirmó su reconstrucción en la antigua casa rectoral, con apertura prevista para el Xacobeo 2027 — NO disponible en agosto 2026.",
         link: "",
-        address: "North End, Boston, MA",
-        category: "restaurant",
+        note: "IMPORTANTE: confirma alojamiento alternativo antes de salir (ver opciones abajo) — llama con antelación, quedan pocos días.",
       },
+      { name: "Albergue de Peregrinos del Monasterio de Oseira", type: "Parroquial / monástico", town: "Oseira (si haces la variante larga)", address: "Monasterio de Sta. María de Oseira", phone: "", price: "Donativo / ~5 € según fuente", reserva: "Recepción 10:00–13:00 y 15:30–19:30; reservas solo para grupos", link: "" },
+      { name: "O Refugio (bar-tienda-alojamiento)", type: "Privado", town: "Cotelas (km ~5 desde Cea)", address: "Lugar Cotelas, 14", phone: "988 282 593", price: "Consultar", reserva: "Llamar con antelación", link: "" },
+      { name: "\"La Casa en Dozón\" (turismo rural)", type: "Privado", town: "Dozón", address: "No confirmada", phone: "", price: "No confirmado", reserva: "Buscar en Ruralgia y confirmar por teléfono", link: "https://www.ruralgia.com/peregrinocastrodozon-otros" },
+    ],
+    restaurants: [
+      { name: "O Refugio", town: "Cotelas (km ~5)", note: "Bar-restaurante-tienda, punto de referencia para peregrinos en esta variante", phone: "988 282 593" },
+      { name: "Café Fraga", town: "Dozón, O Castro (Rúa Doutor Martínez Iglesia, 2)", note: "Café-bar con horario amplio", phone: "986 780 061" },
     ],
   },
   {
-    date: "Dom 5 Abril",
-    city: "Boston",
-    emoji: "🏀",
-    label: "Boston libre + ¡Celtics!",
-    color: "#27ae60",
-    activities: [
-      {
-        time: "Mañana",
-        icon: "🌊",
-        title: "New England Aquarium",
-        desc: "Pingüinos, tiburones y tortugas gigantes.",
-        confirmed: false,
-        done: false,
-        budget: 80,
-        link: "https://www.neaq.org",
-        address: "1 Central Wharf, Boston, MA",
-        category: "activity",
-      },
-      {
-        time: "Mediodía",
-        icon: "🛒",
-        title: "Faneuil Hall Marketplace",
-        desc: "Mercado histórico con comida de todo el mundo.",
-        confirmed: false,
-        done: false,
-        budget: 60,
-        link: "",
-        address: "4 South Market St, Boston, MA",
-        category: "restaurant",
-      },
-      {
-        time: "Tarde",
-        icon: "🏡",
-        title: "Paseo por Beacon Hill",
-        desc: "El barrio más pintoresco de Boston.",
-        confirmed: false,
-        done: false,
-        budget: 0,
-        link: "",
-        address: "Beacon Hill, Boston, MA",
-        category: "activity",
-      },
-      {
-        time: "20:00h",
-        icon: "🏀",
-        title: "CELTICS vs RAPTORS 🎟️",
-        desc: "¡El partido! TD Garden. Llegad 45 min antes.",
-        confirmed: true,
-        done: false,
-        budget: 300,
-        link: "",
-        address: "TD Garden, Boston, MA",
-        category: "activity",
-      },
+    id: 3,
+    date: "Jueves 20 agosto 2026",
+    from: "Castro Dozón",
+    to: "Lalín (vía A Laxe)",
+    km: 17,
+    difficulty: "Media",
+    desnivel: "Sube al Alto de Santo Domingo y a Puxallos (~658 m), luego desciende hasta el valle del Pontiñas",
+    description:
+      "Sale de Castro Dozón junto a la N-525, sube al Alto de Santo Domingo (cruceiro y ermita) y sigue hasta Puxallos, el punto más alto de la etapa. Baja por Pontenoufe (río Asneiro) hasta Botos, la 'Estación de Lalín', donde hay un bar-hostal muy usado por peregrinos. El trazado oficial del Sanabrés termina en A Laxe (parroquia de Bendoiro), donde está el único albergue público de la etapa. Muchos peregrinos alargan ~3 km más para dormir en el centro de Lalín y aprovechar sus servicios y su famoso cocido — indicado en la app como destino final.",
+    variants: [
+      { name: "Final en A Laxe (oficial)", note: "Aquí está el albergue de la Xunta, sin reserva posible. Sin apenas más servicios alrededor." },
+      { name: "Desvío a Lalín centro (recomendado)", note: "+3 km desde Botos o A Laxe. Todos los servicios, más opciones de alojamiento y el cocido gallego." },
+    ],
+    waypoints: [
+      { name: "Castro Dozón", lat: 42.5735, lon: -8.1580, type: "start" },
+      { name: "Alto de Santo Domingo", lat: 42.6000, lon: -8.0800, type: "town" },
+      { name: "Puxallos", lat: 42.6150, lon: -8.0900, type: "town" },
+      { name: "Botos (Estación de Lalín)", lat: 42.6400, lon: -8.1100, type: "town" },
+      { name: "A Laxe (Bendoiro)", lat: 42.6350, lon: -8.1300, type: "town" },
+      { name: "Lalín", lat: 42.6603, lon: -8.1131, type: "end" },
+    ],
+    albergues: [
+      { name: "Albergue de peregrinos de A Laxe", type: "Público (Xunta)", town: "A Laxe, Bendoiro", address: "C/ A Laxe, 21", phone: "658 038 042", price: "10 € (sábanas y manta desechables incl.)", reserva: "No admite reserva — orden de llegada", link: "" },
+      { name: "A Taberna do Vento (bar + hostal)", type: "Privado", town: "Botos, Estación de Lalín", address: "Estación de Botos, 38", phone: "629 306 679", price: "Consultar", reserva: "Reserva por teléfono/WhatsApp", link: "https://www.booking.com/hotel/es/a-taberna-de-vento.html" },
+      { name: "Albergue-Pensión Lalín Centro", type: "Privado", town: "Lalín centro", address: "Rúa Observatorio, 8 - 2º", phone: "610 207 992", price: "Consultar", reserva: "Admite reserva (temporada Semana Santa–2 octubre)", link: "https://www.facebook.com/alberguelalincentro/" },
+      { name: "Hostal Caracas", type: "Privado", town: "Lalín, salida hacia el camino", address: "Rúa da Corredoira, 32", phone: "680 176 205", price: "Individual desde 30 € / Doble desde 50 €", reserva: "Reserva vía Booking", link: "https://www.booking.com/hotel/es/hostal-caracas.html" },
+    ],
+    restaurants: [
+      { name: "A Taberna do Vento", town: "Botos", note: "Cocido, raciones, tostas, desayunos; cerrado domingos; guarda bicis", phone: "629 306 679" },
+      { name: "Pazo de Bendoiro (Mesón)", town: "Bendoiro, km 297 N-525", note: "Pazo del s. XIX, cocina gallega tradicional", phone: "986 794 289" },
+      { name: "Cabanas", town: "Lalín (Rúa Pintor Laxeiro, 3)", note: "El clásico para probar el auténtico cocido de Lalín", phone: "986 782 317" },
+      { name: "Casa Currás", town: "Lalín (Plaza de la Iglesia)", note: "+80 años de tradición, cocido gallego", phone: "" },
+      { name: "Casa Pablo", town: "Lalín", note: "Parrillada y menú del día, cocido casero", phone: "" },
     ],
   },
   {
-    date: "Lun 6 Abril",
-    city: "Boston → New York",
-    emoji: "🚗",
-    label: "Road Trip a NYC",
-    color: "#e67e22",
-    activities: [
-      {
-        time: "Mañana",
-        icon: "🌳",
-        title: "Boston Common",
-        desc: "Último paseo matutino por el parque.",
-        confirmed: false,
-        done: false,
-        budget: 0,
-        link: "",
-        address: "Boston Common, Boston, MA",
-        category: "activity",
-      },
-      {
-        time: "Mediodía",
-        icon: "🚗",
-        title: "Salida hacia New York",
-        desc: "~4,5h por la I-95 South. Parada en New Haven a comer pizza.",
-        confirmed: false,
-        done: false,
-        budget: 150,
-        link: "",
-        address: "New Haven, CT",
-        category: "transport",
-      },
-      {
-        time: "Tarde",
-        icon: "🏨",
-        title: "Check-in Manhattan",
-        desc: "Hotel cerca de Central Park. Instalarse y dejar las maletas.",
-        confirmed: false,
-        done: false,
-        budget: 0,
-        link: "",
-        address: "Manhattan, New York",
-        category: "hotel",
-      },
-      {
-        time: "Noche",
-        icon: "🌃",
-        title: "Times Square",
-        desc: "Paseo nocturno por Times Square y Broadway.",
-        confirmed: false,
-        done: false,
-        budget: 40,
-        link: "",
-        address: "Times Square, New York",
-        category: "activity",
-      },
+    id: 4,
+    date: "Viernes 21 agosto 2026",
+    from: "Lalín",
+    to: "Silleda",
+    km: 15.7,
+    difficulty: "Baja",
+    desnivel: "+278 m / −345 m — corta, con subidas y bajadas suaves sin dificultad relevante",
+    description:
+      "Etapa corta y agradecida. Baja desde Lalín por el paseo fluvial del río Pontiñas (antiguos molinos) hasta O Espiño, donde hay una capilla dedicada a la Virgen de Fátima y huertas en terraza. Cruza zona industrial y pasa por A Ponte Taboada, Carral y Prado antes de un túnel bajo la AP-53 y la última subida hacia Trasfontao, ya con Silleda a la vista. Silleda es la capital de la comarca de Trasdeza y tiene todos los servicios.",
+    variants: [],
+    waypoints: [
+      { name: "Lalín", lat: 42.6603, lon: -8.1131, type: "start" },
+      { name: "O Espiño", lat: 42.6650, lon: -8.1450, type: "town" },
+      { name: "A Ponte Taboada", lat: 42.6720, lon: -8.1750, type: "town" },
+      { name: "Prado", lat: 42.6850, lon: -8.2100, type: "town" },
+      { name: "Silleda", lat: 42.7015, lon: -8.2481, type: "end" },
+    ],
+    albergues: [
+      { name: "El Gran Albergue Silleda", type: "Privado", town: "Silleda", address: "Rúa Antón Alonso Ríos, 18", phone: "611 286 757", price: "Desde 10 €", reserva: "Admite reserva", link: "" },
+      { name: "Albergue Santa Olaia", type: "Privado", town: "Silleda", address: "Avenida do Parque, 17", phone: "626 405 652", price: "10 € (ropa de cama desechable incl.)", reserva: "Admite reserva — check-in 12:00, cierre 22:00, 60 plazas", link: "https://www.booking.com/hotel/es/albergue-santa-olaia-silleda.html" },
+      { name: "Albergue Turístico Silleda", type: "Privado", town: "Silleda", address: "Rúa Venezuela, 38, 3º-4º izq.", phone: "643 898 693", price: "Consultar", reserva: "Admite reserva — check-in 12:00, cierre 22:00", link: "" },
+      { name: "Hotel Ramos", type: "Privado (hotel)", town: "Silleda, céntrico", address: "Rúa Antón Alonso Ríos, 24", phone: "986 581 212", price: "Individual desde 34 € / Doble desde 55 €", reserva: "Consultar disponibilidad", link: "" },
+      { name: "Hostal Toxa", type: "Privado (hostal)", town: "Silleda, céntrico", address: "Rúa Trasdeza, 88", phone: "986 580 111", price: "Consultar", reserva: "Consultar", link: "" },
+    ],
+    restaurants: [
+      { name: "O Camiño", town: "Silleda", note: "Menú del día, churrasco a la brasa viernes noche y sábados", phone: "689 180 928" },
+      { name: "Camiño De Ferro", town: "Silleda", note: "En la antigua estación de tren; raciones y churrasco, buena relación calidad-precio", phone: "" },
+      { name: "Restaurante Puente Taboada", town: "Silleda", note: "Muy frecuentado por peregrinos del Sanabrés; menú churrasco ~17,50 €", phone: "" },
+      { name: "Panadería Luis Mella", town: "Silleda", note: "Empanadas muy recomendadas por peregrinos", phone: "" },
     ],
   },
   {
-    date: "Mar 7 Abril",
-    city: "New York",
-    emoji: "🗽",
-    label: "Estatua de la Libertad",
-    color: "#1a365d",
-    activities: [
-      {
-        time: "7:30h",
-        icon: "🗽",
-        title: "Estatua Libertad + Ellis 🎟️",
-        desc: "Ferry desde Battery Park. Ellis Island es muy emotiva.",
-        confirmed: true,
-        done: false,
-        budget: 100,
-        link: "",
-        address: "Battery Park, New York",
-        category: "activity",
-      },
-      {
-        time: "Mediodía",
-        icon: "🌉",
-        title: "Brooklyn Bridge",
-        desc: "Cruzad el puente (1 km) hasta DUMBO.",
-        confirmed: false,
-        done: false,
-        budget: 0,
-        link: "",
-        address: "Brooklyn Bridge, New York",
-        category: "activity",
-      },
-      {
-        time: "Tarde",
-        icon: "📸",
-        title: "DUMBO, Brooklyn",
-        desc: "Barrio artístico. La famosa foto del puente.",
-        confirmed: false,
-        done: false,
-        budget: 30,
-        link: "",
-        address: "DUMBO, Brooklyn, NY",
-        category: "activity",
-      },
-      {
-        time: "Noche",
-        icon: "🍕",
-        title: "Pizza en Juliana's",
-        desc: "Una de las mejores pizzas de Nueva York.",
-        confirmed: false,
-        done: false,
-        budget: 80,
-        link: "",
-        address: "19 Old Fulton St, Brooklyn, NY",
-        category: "restaurant",
-      },
+    id: 5,
+    date: "Sábado 22 agosto 2026",
+    from: "Silleda",
+    to: "Ponte Ulla",
+    km: 19.7,
+    difficulty: "Media",
+    desnivel: "Perfil descendente en general, con un tramo final pronunciado (~10%, 2,5 km en zigzag) hacia Ponte Ulla",
+    description:
+      "Tras salir de Silleda en paralelo a la N-640, el camino cruza O Foxo y San Fiz hasta A Bandeira (todos los servicios). Después continúa entre campos y bosques por Piñeiro, Vilariño, Besteiro y San Martiño de Dornelas — merece la pena parar en su iglesia románica del s. XII, ligada a la donación de la reina Urraca a la Catedral de Santiago en 1115. Tras O Seixo baja con fuerte pendiente hasta Ponte Ulla, en el límite entre Pontevedra y A Coruña, cruzando el río Ulla por el puente histórico junto al mirador de Gundián.",
+    variants: [
+      { name: "Fin de etapa alternativo en Outeiro", note: "Algunos peregrinos alargan hasta Outeiro (unos km más) para dejar la última etapa más corta; solo hay un albergue público de la Xunta, sin más servicios." },
+    ],
+    waypoints: [
+      { name: "Silleda", lat: 42.7015, lon: -8.2481, type: "start" },
+      { name: "A Bandeira", lat: 42.726, lon: -8.289, type: "town" },
+      { name: "San Martiño de Dornelas", lat: 42.754, lon: -8.337, type: "town" },
+      { name: "Ponte Ulla", lat: 42.7825, lon: -8.385, type: "end" },
+    ],
+    albergues: [
+      { name: "Albergue-Pensión O Cruceiro da Ulla", type: "Privado (albergue + pensión)", town: "Ponte Ulla", address: "Vista Alegre, s/n", phone: "981 512 099", price: "16 €/persona (albergue); menú 14 €; desayuno 4,50 €", reserva: "Admite reserva", link: "https://www.ocruceiro.es/" },
+      { name: "Hostal Ríos", type: "Privado (hostal)", town: "Ponte Ulla, cruzando el puente", address: "A pie de camino", phone: "981 512 305", price: "Desde 12 €/persona", reserva: "Consultar", link: "" },
+      { name: "Pensión A Taberna de Gundián", type: "Privado", town: "Ponte Ulla", address: "", phone: "", price: "Consultar", reserva: "Consultar", link: "" },
+      { name: "Pensión Juanito", type: "Privado", town: "Ponte Ulla", address: "", phone: "", price: "Consultar", reserva: "Consultar", link: "" },
+      { name: "Albergue de peregrinos de Bandeira (opción intermedia)", type: "Público (Xunta)", town: "A Bandeira", address: "Rúa Lourás, s/n", phone: "670 502 356", price: "10 € (sábanas/mantas desechables incl.)", reserva: "No admite reserva", link: "", note: "Útil si prefieres acortar esta etapa y alargar la siguiente." },
+    ],
+    restaurants: [
+      { name: "Trécola Bar", town: "A Bandeira", note: "Bar de peregrinos en pleno camino: pizzas, hamburguesas, tortilla, tapas; pulpo los días 14 y 29 (mercado)", phone: "986 181 634" },
+      { name: "O Cruceiro da Ulla (bar-restaurante)", town: "Ponte Ulla", note: "Menú del día 14 €, desayuno 4,50 €", phone: "981 512 099" },
     ],
   },
   {
-    date: "Mié 8 Abril",
-    city: "New York",
-    emoji: "🏙️",
-    label: "El Bronx + Summit",
-    color: "#1a365d",
-    activities: [
-      {
-        time: "Mañana",
-        icon: "🎨",
-        title: "Tour por el Bronx 🎟️",
-        desc: "Cuna del hip-hop y el grafiti. Yankee Stadium exterior.",
-        confirmed: true,
-        done: false,
-        budget: 80,
-        link: "",
-        address: "The Bronx, New York",
-        category: "activity",
-      },
-      {
-        time: "Mediodía",
-        icon: "🌳",
-        title: "Central Park",
-        desc: "Comida en el parque o bici de alquiler para los peques.",
-        confirmed: false,
-        done: false,
-        budget: 40,
-        link: "",
-        address: "Central Park, New York",
-        category: "activity",
-      },
-      {
-        time: "17:30h",
-        icon: "🔭",
-        title: "SUMMIT One Vanderbilt 🎟️",
-        desc: "Mejor mirador de NYC. Experiencia inmersiva.",
-        confirmed: true,
-        done: false,
-        budget: 120,
-        link: "",
-        address: "45 E 42nd St, New York",
-        category: "activity",
-      },
+    id: 6,
+    date: "Domingo 23 agosto 2026",
+    from: "Ponte Ulla",
+    to: "Santiago de Compostela",
+    km: 20.4,
+    difficulty: "Media — última etapa, con fuerzas de sobra por la emoción de llegar",
+    desnivel: "Subida pronunciada inicial, luego perfil suave hasta la entrada en Santiago",
+    description:
+      "¡Última etapa! Sale de Ponte Ulla y sube (algunos itinerarios pasan primero por Outeiro, en Vedra, con albergue de la Xunta) atravesando bosques hasta Lestedo, en Boqueixón — desde aquí hay un desvío opcional al Pico Sacro. Sigue por Susana, ya en el municipio de Santiago, con pocos servicios en este tramo (lleva agua y algo de comida). La entrada a la ciudad es por el barrio de Sar, junto a la Colegiata románica de Santa María a Real do Sar, cruzando el puente románico y subiendo por Castrón Douro hasta el casco histórico por la Porta de Mazarelos. De ahí a la Praza da Quintana, Praza das Praterías y, por fin, la Praza do Obradoiro frente a la Catedral. Guarda fuerzas (y algo de emoción) para el abrazo al Apóstol.",
+    variants: [],
+    waypoints: [
+      { name: "Ponte Ulla", lat: 42.7825, lon: -8.385, type: "start" },
+      { name: "Outeiro (Vedra)", lat: 42.8, lon: -8.4165, type: "town" },
+      { name: "Lestedo (Boqueixón)", lat: 42.822, lon: -8.4558, type: "town" },
+      { name: "Susana", lat: 42.849, lon: -8.503, type: "town" },
+      { name: "Sar (Colegiata)", lat: 42.8708, lon: -8.5423, type: "town" },
+      { name: "Santiago de Compostela (Catedral)", lat: 42.8805, lon: -8.5456, type: "end" },
     ],
-  },
-  {
-    date: "Jue 9 Abril",
-    city: "New York",
-    emoji: "🎭",
-    label: "Central Park & Cultura",
-    color: "#1a365d",
-    activities: [
-      {
-        time: "Mañana",
-        icon: "🌳",
-        title: "Central Park en profundidad",
-        desc: "Strawberry Fields, Castillo Belvedere, carrusel.",
-        confirmed: false,
-        done: false,
-        budget: 30,
-        link: "",
-        address: "Central Park, New York",
-        category: "activity",
-      },
-      {
-        time: "Mediodía",
-        icon: "🖼️",
-        title: "Museo MET",
-        desc: "El museo más grande de EE.UU. Colección egipcia.",
-        confirmed: false,
-        done: false,
-        budget: 80,
-        link: "",
-        address: "1000 Fifth Ave, New York",
-        category: "activity",
-      },
-      {
-        time: "Noche",
-        icon: "🎭",
-        title: "Broadway Show",
-        desc: "El Rey León o Aladdin. Entradas en TKTS.",
-        confirmed: false,
-        done: false,
-        budget: 300,
-        link: "",
-        address: "Times Square, New York",
-        category: "activity",
-      },
+    albergues: [
+      { name: "Albergue de peregrinos de Outeiro (opción intermedia)", type: "Público (Xunta)", town: "Outeiro, Vedra", address: "O Outeiro, s/n", phone: "630 941 288", price: "8–10 € (sábanas/mantas desechables incl. según fuente)", reserva: "Normalmente sin reserva — fuentes contradictorias, llamar para confirmar", link: "", note: "Útil solo si divides la última etapa en dos días más cortos." },
+      { name: "Albergue de peregrinos San Lázaro", type: "Público (Xunta)", town: "Santiago de Compostela", address: "Rúa de San Lázaro, s/n", phone: "981 571 488", price: "10 € (ropa de cama desechable incl.)", reserva: "Admite reserva previa (excepcional para un albergue público)", link: "" },
+      { name: "Albergue Seminario Menor", type: "Privado", town: "Santiago (Belvís, ~15 min a pie de la Catedral)", address: "Avenida Quiroga Palacios, 2", phone: "881 031 768", price: "22–24 € litera; desayuno 5 €", reserva: "Admite reserva", link: "" },
+      { name: "Albergue Roots & Boots", type: "Privado", town: "Santiago (junto a la Alameda, vistas a la Catedral)", address: "Campo Cruceiro do Gaio, 7", phone: "881 259 092", price: "12–18 € según temporada", reserva: "Consultar", link: "" },
+      { name: "Albergue The Last Stamp", type: "Privado", town: "Santiago (~200 m de la Catedral)", address: "Rúa do Preguntoiro, 10", phone: "981 563 525", price: "20–26 € según temporada", reserva: "Admite reserva", link: "" },
     ],
-  },
-  {
-    date: "Vie 10 Abril",
-    city: "New York",
-    emoji: "🌆",
-    label: "Manhattan Norte & Sur",
-    color: "#1a365d",
-    activities: [
-      {
-        time: "Mañana",
-        icon: "🚶",
-        title: "The High Line",
-        desc: "Parque elevado sobre antigua vía de tren.",
-        confirmed: false,
-        done: false,
-        budget: 0,
-        link: "",
-        address: "The High Line, New York",
-        category: "activity",
-      },
-      {
-        time: "Mediodía",
-        icon: "🍽️",
-        title: "Chelsea Market",
-        desc: "Mercado gourmet bajo el High Line.",
-        confirmed: false,
-        done: false,
-        budget: 70,
-        link: "",
-        address: "75 9th Ave, New York",
-        category: "restaurant",
-      },
-      {
-        time: "Tarde",
-        icon: "🌆",
-        title: "Oculus / 11-S",
-        desc: "Memorial del 11-S muy emotivo.",
-        confirmed: false,
-        done: false,
-        budget: 40,
-        link: "",
-        address: "180 Greenwich St, New York",
-        category: "activity",
-      },
-    ],
-  },
-  {
-    date: "Sáb 11 Abril",
-    city: "Boston ✈️",
-    emoji: "✈️",
-    label: "Vuelta a casa ⚠️",
-    color: "#e74c3c",
-    activities: [
-      {
-        time: "8:00h",
-        icon: "🌅",
-        title: "Check-out y desayuno",
-        desc: "Salid del hotel antes de las 9:30h.",
-        confirmed: false,
-        done: false,
-        budget: 30,
-        link: "",
-        address: "Manhattan, New York",
-        category: "transport",
-      },
-      {
-        time: "9:30h",
-        icon: "🚗",
-        title: "Salida hacia Boston ⚠️",
-        desc: "¡4,5h de trayecto + tráfico de viernes!",
-        confirmed: true,
-        done: false,
-        budget: 150,
-        link: "",
-        address: "I-95 North",
-        category: "transport",
-      },
-      {
-        time: "14:30h",
-        icon: "🏁",
-        title: "Boston Logan – Vuelo",
-        desc: "Devolved el coche. ¡Vuelo a las 17:30h!",
-        confirmed: true,
-        done: false,
-        budget: 0,
-        link: "",
-        address: "Boston Logan International Airport",
-        category: "transport",
-      },
+    restaurants: [
+      { name: "Casa Camilo", town: "Santiago (Calle da Raíña, 24)", note: "Restaurante histórico de +80 años a metros de la Catedral, tradición entre peregrinos para celebrar la llegada", phone: "981 584 593" },
+      { name: "Casa Manolo", town: "Santiago (Praza de Cervantes)", note: "Menú del día abundante y económico, muy popular entre peregrinos y estudiantes", phone: "981 582 950" },
+      { name: "Casa Marcelo", town: "Santiago (junto a la Catedral)", note: "Cocina de autor/fusión, para darse un capricho gastronómico tras el Camino", phone: "" },
+      { name: "Benboa", town: "Santiago (Rúa do Preguntoiro)", note: "Antigua farmacia reconvertida en restaurante de cocina atlántica", phone: "" },
     ],
   },
 ];
 
-function SuggCard({ act, col, onAdd }) {
-  const [added, setAdded] = useState(false);
+const OFICINA_PEREGRINO = {
+  address: "Rúa das Carretas, 33, Santiago de Compostela (a pocos metros de la Praza do Obradoiro)",
+  phone: "981 568 846",
+  horario: "09:00–19:00 (ampliado hasta las 21:00 en temporada alta). Cerrado 25 dic y 1 ene.",
+  email: "oficinadelperegrino@catedraldesantiago.es",
+};
+
+const OURENSE_ALBERGUE_SALIDA = {
+  name: "Albergue de Peregrinos de Ourense (Eligio Rivas Quintas)",
+  type: "Público (Xunta de Galicia)",
+  town: "Ourense",
+  address: "Rúa da Barreira, 12 — Ourense",
+  phone: "988 238 948",
+  price: "€ (tarifa pública Xunta)",
+  reserva: "No admite reserva — orden de llegada",
+  link: "",
+  note: "Útil para la noche del lunes 17, antes de arrancar el martes.",
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// Estilos globales (inyectados una vez)
+// ───────────────────────────────────────────────────────────────────────────
+const GLOBAL_CSS = `
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f4ede2; color: #2c2116; }
+  .cs-app { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; max-width: 640px; margin: 0 auto; min-height: 100vh; background: #f4ede2; padding-bottom: 40px; }
+  .cs-header { background: linear-gradient(135deg,#7a4b2a,#a86a3d); color: #fff; padding: 18px 16px 14px; position: sticky; top: 0; z-index: 20; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+  .cs-header h1 { margin: 0; font-size: 19px; display:flex; align-items:center; gap:8px; }
+  .cs-header p { margin: 4px 0 0; font-size: 12.5px; opacity: .9; }
+  .cs-tabs { display: flex; overflow-x: auto; gap: 6px; padding: 10px 10px 0; background: #7a4b2a; position: sticky; top: 62px; z-index: 19; scrollbar-width: none; }
+  .cs-tabs::-webkit-scrollbar { display: none; }
+  .cs-tab { flex: 0 0 auto; padding: 8px 12px; border-radius: 10px 10px 0 0; background: rgba(255,255,255,.12); color: #fff; font-size: 12.5px; font-weight: 600; border: none; cursor: pointer; white-space: nowrap; }
+  .cs-tab.active { background: #f4ede2; color: #7a4b2a; }
+  .cs-content { padding: 14px; }
+  .cs-card { background: #fff; border-radius: 14px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .cs-badge { display: inline-block; padding: 3px 9px; border-radius: 20px; font-size: 11.5px; font-weight: 700; margin-right: 6px; margin-bottom: 4px; }
+  .cs-sections { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; scrollbar-width: none; }
+  .cs-sections::-webkit-scrollbar { display: none; }
+  .cs-sec-btn { flex: 0 0 auto; padding: 7px 12px; border-radius: 20px; border: 1.5px solid #c9a878; background: #fff; color: #7a4b2a; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .cs-sec-btn.active { background: #7a4b2a; color: #fff; border-color: #7a4b2a; }
+  .cs-map { width: 100%; height: 320px; border-radius: 12px; overflow: hidden; margin-bottom: 10px; z-index: 1; }
+  .cs-btn { background: #7a4b2a; color: #fff; border: none; padding: 9px 14px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .cs-btn.secondary { background: #fff; color: #7a4b2a; border: 1.5px solid #7a4b2a; }
+  .cs-btn:disabled { opacity: .5; }
+  .cs-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .cs-alb { border: 1px solid #eee1cf; border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+  .cs-alb h4 { margin: 0 0 4px; font-size: 14.5px; }
+  .cs-alb .meta { font-size: 12.5px; color: #6b5c48; margin-bottom: 6px; }
+  .cs-alb .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .cs-link { display: inline-block; font-size: 12.5px; padding: 6px 10px; border-radius: 8px; background: #f4ede2; color: #7a4b2a; text-decoration: none; font-weight: 600; }
+  .cs-empty { color: #96876f; font-size: 13px; font-style: italic; padding: 8px 0; }
+  .cs-diary textarea { width: 100%; min-height: 140px; border-radius: 10px; border: 1.5px solid #e4d5bd; padding: 10px; font-size: 14px; font-family: inherit; resize: vertical; }
+  .cs-photos { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; margin-top: 10px; }
+  .cs-photos img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; }
+  .cs-photo-wrap { position: relative; }
+  .cs-photo-del { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,.6); color:#fff; border:none; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; cursor: pointer; line-height:1; }
+  .gps-dot { width: 14px; height: 14px; border-radius: 50%; background: #1a73e8; border: 2px solid #fff; box-shadow: 0 0 0 2px #1a73e8; }
+  .gps-pulse { position:absolute; top:-8px; left:-8px; width: 30px; height: 30px; border-radius: 50%; background: rgba(26,115,232,.35); animation: cspulse 1.6s ease-out infinite; }
+  @keyframes cspulse { 0% { transform: scale(.4); opacity: .8;} 100% { transform: scale(1.6); opacity: 0; } }
+  .cs-compass { width: 64px; height: 64px; border-radius: 50%; border: 3px solid #7a4b2a; display:flex; align-items:center; justify-content:center; margin: 0 auto; transition: transform .2s linear; font-size: 26px; }
+  .cs-gpsbox { background: #fbf5ea; border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; font-size: 13px; }
+  .cs-gpsgrid { display:grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin-top:6px; }
+  .cs-gpsgrid div b { display:block; font-size:15px; }
+  .emoji-marker { text-align:center; }
+`;
+
+function injectGlobalStyles() {
+  if (document.getElementById("cs-global-style")) return;
+  const style = document.createElement("style");
+  style.id = "cs-global-style";
+  style.textContent = GLOBAL_CSS;
+  document.head.appendChild(style);
+}
+
+function emojiIcon(emoji, size = 24) {
+  return L.divIcon({
+    html: `<div class="emoji-marker" style="font-size:${size}px;transform:translate(-50%,-95%);">${emoji}</div>`,
+    className: "",
+    iconSize: [0, 0],
+  });
+}
+
+const gpsDivIcon = L.divIcon({
+  html: '<div style="position:relative;width:14px;height:14px;"><div class="gps-pulse"></div><div class="gps-dot"></div></div>',
+  className: "",
+  iconSize: [14, 14],
+  iconAnchor: [7, 7],
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Mapa de etapa con seguimiento GPS + carga de GPX real + brújula
+// ───────────────────────────────────────────────────────────────────────────
+function StageMap({ stage, gpxPoints, onGpxUpload, walkStat, onWalkUpdate }) {
+  const mapRef = useRef(null);
+  const mapDivRef = useRef(null);
+  const routeLayerRef = useRef(null);
+  const markersLayerRef = useRef(null);
+  const liveMarkerRef = useRef(null);
+  const accCircleRef = useRef(null);
+
+  const [tracking, setTracking] = useState(false);
+  const [pos, setPos] = useState(null);
+  const [geoError, setGeoError] = useState("");
+  const [heading, setHeading] = useState(null);
+  const [compassOn, setCompassOn] = useState(false);
+  const watchIdRef = useRef(null);
+
+  // init map
+  useEffect(() => {
+    if (mapRef.current) {
+      mapRef.current.remove();
+      mapRef.current = null;
+    }
+    const map = L.map(mapDivRef.current, { zoomControl: true }).setView(
+      [stage.waypoints[0].lat, stage.waypoints[0].lon],
+      12
+    );
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18,
+      attribution: "© OpenStreetMap",
+    }).addTo(map);
+    mapRef.current = map;
+    routeLayerRef.current = L.layerGroup().addTo(map);
+    markersLayerRef.current = L.layerGroup().addTo(map);
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
+  }, [stage.id]);
+
+  // draw route + markers whenever gpx / stage changes
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    routeLayerRef.current.clearLayers();
+    markersLayerRef.current.clearLayers();
+
+    const hasGpx = gpxPoints && gpxPoints.length > 1;
+    const latlngs = hasGpx
+      ? gpxPoints.map((p) => [p.lat, p.lon])
+      : stage.waypoints.map((p) => [p.lat, p.lon]);
+
+    L.polyline(latlngs, {
+      color: hasGpx ? "#e63946" : "#7a4b2a",
+      weight: hasGpx ? 4 : 3,
+      dashArray: hasGpx ? null : "6 6",
+      opacity: 0.9,
+    }).addTo(routeLayerRef.current);
+
+    stage.waypoints.forEach((wp) => {
+      const emoji = wp.type === "start" ? "🟢" : wp.type === "end" ? "🏁" : "📍";
+      L.marker([wp.lat, wp.lon], { icon: emojiIcon(emoji, 22) })
+        .bindPopup(`<b>${wp.name}</b>`)
+        .addTo(markersLayerRef.current);
+    });
+
+    const bounds = L.latLngBounds(latlngs);
+    map.fitBounds(bounds, { padding: [24, 24] });
+  }, [stage, gpxPoints]);
+
+  // live position marker
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !pos) return;
+    if (!liveMarkerRef.current) {
+      liveMarkerRef.current = L.marker([pos.lat, pos.lon], { icon: gpsDivIcon, zIndexOffset: 1000 }).addTo(map);
+    } else {
+      liveMarkerRef.current.setLatLng([pos.lat, pos.lon]);
+    }
+    if (pos.accuracy) {
+      if (!accCircleRef.current) {
+        accCircleRef.current = L.circle([pos.lat, pos.lon], {
+          radius: pos.accuracy,
+          color: "#1a73e8",
+          weight: 1,
+          fillOpacity: 0.08,
+        }).addTo(map);
+      } else {
+        accCircleRef.current.setLatLng([pos.lat, pos.lon]).setRadius(pos.accuracy);
+      }
+    }
+  }, [pos]);
+
+  const startTracking = () => {
+    if (!navigator.geolocation) {
+      setGeoError("Este dispositivo/navegador no soporta geolocalización.");
+      return;
+    }
+    setGeoError("");
+    setTracking(true);
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (p) => {
+        const next = {
+          lat: p.coords.latitude,
+          lon: p.coords.longitude,
+          accuracy: p.coords.accuracy,
+          speed: p.coords.speed,
+          ts: p.timestamp,
+        };
+        setPos(next);
+        onWalkUpdate(next);
+        if (mapRef.current) mapRef.current.panTo([next.lat, next.lon]);
+      },
+      (err) => setGeoError("No se pudo obtener tu posición: " + err.message),
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 }
+    );
+  };
+
+  const stopTracking = () => {
+    if (watchIdRef.current != null) navigator.geolocation.clearWatch(watchIdRef.current);
+    watchIdRef.current = null;
+    setTracking(false);
+  };
+
+  useEffect(() => () => {
+    if (watchIdRef.current != null) navigator.geolocation.clearWatch(watchIdRef.current);
+  }, []);
+
+  const enableCompass = async () => {
+    const DOE = window.DeviceOrientationEvent;
+    if (DOE && typeof DOE.requestPermission === "function") {
+      try {
+        const res = await DOE.requestPermission();
+        if (res !== "granted") return;
+      } catch {
+        return;
+      }
+    }
+    window.addEventListener("deviceorientationabsolute", handleOrientation, true);
+    window.addEventListener("deviceorientation", handleOrientation, true);
+    setCompassOn(true);
+  };
+
+  function handleOrientation(e) {
+    let h = e.webkitCompassHeading != null ? e.webkitCompassHeading : e.alpha;
+    if (h != null) setHeading(360 - h < 360 ? (e.webkitCompassHeading != null ? h : 360 - h) : h);
+  }
+
+  useEffect(
+    () => () => {
+      window.removeEventListener("deviceorientationabsolute", handleOrientation, true);
+      window.removeEventListener("deviceorientation", handleOrientation, true);
+    },
+    []
+  );
+
+  // navigation guidance
+  const guidance = useMemo(() => {
+    if (!pos) return null;
+    const points = gpxPoints && gpxPoints.length > 1 ? gpxPoints : stage.waypoints;
+    const { idx, dist: distToTrack } = nearestPointIndex(points, pos.lat, pos.lon);
+    const remaining = trackLengthFrom(points, idx);
+    const target = points[Math.min(idx + 3, points.length - 1)] || points[points.length - 1];
+    const brg = bearing(pos.lat, pos.lon, target.lat, target.lon);
+    const finalWp = stage.waypoints[stage.waypoints.length - 1];
+    const straightToEnd = haversine(pos.lat, pos.lon, finalWp.lat, finalWp.lon);
+    return {
+      distToTrack,
+      remaining: (gpxPoints && gpxPoints.length > 1) ? remaining : straightToEnd,
+      bearingToNext: brg,
+      usingGpx: !!(gpxPoints && gpxPoints.length > 1),
+    };
+  }, [pos, gpxPoints, stage]);
+
+  const arrowRotation = useMemo(() => {
+    if (!guidance) return 0;
+    if (heading != null) return guidance.bearingToNext - heading;
+    return guidance.bearingToNext;
+  }, [guidance, heading]);
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    const pts = parseGPX(text);
+    if (!pts.length) {
+      alert("No se han podido leer puntos de este GPX.");
+      return;
+    }
+    onGpxUpload(pts);
+  };
+
   return (
-    <div
-      style={{
-        background: "white",
-        borderRadius: 16,
-        marginBottom: 10,
-        padding: 16,
-        border: `1.5px solid #eee`,
-        boxShadow: "0 3px 10px rgba(0,0,0,0.06)",
-      }}
-    >
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-        <span style={{ fontSize: 32, flexShrink: 0 }}>{act.icon}</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
-            {act.title}
-          </div>
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              marginBottom: 8,
-              flexWrap: "wrap",
-            }}
-          >
-            {act.time && (
-              <span style={{ fontSize: 16, color: "#888", fontWeight: "bold" }}>
-                ⏰ {act.time}
-              </span>
-            )}
-            {act.budget > 0 && (
-              <span
-                style={{
-                  fontSize: 14,
-                  background: "#e8f4fd",
-                  color: "#1a73e8",
-                  padding: "2px 8px",
-                  borderRadius: 6,
-                  fontWeight: 700,
-                }}
-              >
-                💰 ~{act.budget}€
-              </span>
-            )}
-          </div>
-          <p
-            style={{
-              margin: "0 0 10px",
-              fontSize: 16,
-              color: "#555",
-              lineHeight: 1.5,
-            }}
-          >
-            {act.desc}
-          </p>
-        </div>
+    <div>
+      <div className="cs-map" ref={mapDivRef} />
+      <div className="cs-row" style={{ marginBottom: 10 }}>
+        {!tracking ? (
+          <button className="cs-btn" onClick={startTracking}>📡 Activar GPS en vivo</button>
+        ) : (
+          <button className="cs-btn secondary" onClick={stopTracking}>⏸️ Pausar GPS</button>
+        )}
+        {!compassOn && (
+          <button className="cs-btn secondary" onClick={enableCompass}>🧭 Activar brújula</button>
+        )}
+        <label className="cs-btn secondary" style={{ cursor: "pointer" }}>
+          🗺️ Subir track GPX
+          <input type="file" accept=".gpx" onChange={handleFile} style={{ display: "none" }} />
+        </label>
       </div>
-      <button
-        onClick={() => {
-          if (!added) {
-            onAdd();
-            setAdded(true);
-          }
-        }}
-        style={{
-          marginTop: 10,
-          width: "100%",
-          background: added ? "#27ae60" : col,
-          color: "white",
-          border: "none",
-          borderRadius: 12,
-          padding: "14px",
-          fontSize: 16,
-          fontWeight: 800,
-          cursor: added ? "default" : "pointer",
-          transition: "0.2s",
-        }}
-      >
-        {added ? "✅ Añadido al plan" : "➕ Añadir al plan"}
-      </button>
+      {geoError && <div className="cs-empty">{geoError}</div>}
+      {!gpxPoints?.length && (
+        <div className="cs-empty">
+          Sin GPX real cargado: la línea del mapa es aproximada (recta entre pueblos). Para indicaciones precisas
+          descarga gratis el track de esta etapa en Wikiloc o Gronze y súbelo aquí — funciona sin conexión después.
+        </div>
+      )}
+      {pos && guidance && (
+        <div className="cs-gpsbox">
+          <div className="cs-row" style={{ justifyContent: "space-between" }}>
+            <div
+              className="cs-compass"
+              style={{ transform: `rotate(${arrowRotation}deg)` }}
+              title="Dirección hacia el siguiente punto del camino"
+            >
+              ⬆️
+            </div>
+            <div style={{ flex: 1, marginLeft: 12 }}>
+              <div>
+                Rumbo al siguiente punto: <b>{compassLabel(guidance.bearingToNext)}</b> ({Math.round(guidance.bearingToNext)}°)
+                {heading == null && <span> — activa la brújula para ver la flecha relativa a hacia dónde miras</span>}
+              </div>
+            </div>
+          </div>
+          <div className="cs-gpsgrid">
+            <div>Distancia recorrida hoy<b>{formatDist(walkStat?.distanceM || 0)}</b></div>
+            <div>Quedan hasta el final<b>{formatDist(guidance.remaining)}</b></div>
+            <div>Precisión GPS<b>{Math.round(pos.accuracy || 0)} m</b></div>
+            <div>Velocidad<b>{pos.speed ? (pos.speed * 3.6).toFixed(1) + " km/h" : "—"}</b></div>
+          </div>
+          {guidance.usingGpx && guidance.distToTrack > 60 && (
+            <div style={{ marginTop: 6, color: "#c0392b", fontWeight: 600 }}>
+              ⚠️ Estás a {formatDist(guidance.distToTrack)} del track — puede que te hayas desviado.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-export default function App() {
-  const [data, setData] = useState(null);
-  const [sel, setSel] = useState(0);
-  const [exp, setExp] = useState(null);
-  const [view, setView] = useState("plan");
-  const [editModal, setEditModal] = useState(null);
-  const [form, setForm] = useState({});
-  const [iconPicker, setIconPicker] = useState(false);
-  const [sugg, setSugg] = useState(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState(null);
-  const [aiStatus, setAiStatus] = useState(""); // "", "connecting", "retrying", "parsing"
-  const [suggCache, setSuggCache] = useState({}); // cache por día
-  const [fetchingRef] = useState({ current: false }); // evitar llamadas duplicadas
-  const [delConfirm, setDelConfirm] = useState(null);
-  const [saveStatus, setSaveStatus] = useState("");
-  const [weatherData, setWeatherData] = useState({});
-  const [uploading, setUploading] = useState(null);
-  const [newCheckItem, setNewCheckItem] = useState("");
-
-  useEffect(() => {
-    const unsubscribe = onSnapshot(
-      TRIP_DOC,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const fetchedData = docSnap.data();
-          if (!fetchedData.checklist) fetchedData.checklist = INIT_CHECKLIST;
-          setData(fetchedData);
-          setSaveStatus("cloud");
-        } else {
-          const initial = { dias: INIT_DAYS, checklist: INIT_CHECKLIST };
-          setDoc(TRIP_DOC, initial);
-          setData(initial);
-        }
-      },
-      (error) => {
-        console.error("Firebase error:", error);
-        if (!data) setData({ dias: INIT_DAYS, checklist: INIT_CHECKLIST });
-      }
-    );
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const fetchWeather = async () => {
-      try {
-        const resB = await fetch(
-          "https://api.open-meteo.com/v1/forecast?latitude=42.3601&longitude=-71.0589&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=America%2FNew_York&forecast_days=16"
-        );
-        const dataB = await resB.json();
-        const resNY = await fetch(
-          "https://api.open-meteo.com/v1/forecast?latitude=40.7128&longitude=-74.0060&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=America%2FNew_York&forecast_days=16"
-        );
-        const dataNY = await resNY.json();
-        const WMO = {
-          0: "☀️",
-          1: "🌤️",
-          2: "⛅",
-          3: "☁️",
-          45: "🌫️",
-          48: "🌫️",
-          51: "🌧️",
-          53: "🌧️",
-          55: "🌧️",
-          61: "☔",
-          63: "☔",
-          65: "☔",
-          71: "🌨️",
-          73: "🌨️",
-          75: "🌨️",
-          80: "🌦️",
-          81: "🌦️",
-          82: "🌦️",
-          95: "⛈️",
-          96: "⛈️",
-          99: "⛈️",
-        };
-        const wMap = {};
-        const process = (d, prefix) =>
-          d.daily.time.forEach((dt, i) => {
-            wMap[`${prefix}-${parseInt(dt.split("-")[2], 10)}`] = {
-              icon: WMO[d.daily.weather_code[i]] || "🌤️",
-              max: Math.round(d.daily.temperature_2m_max[i]),
-              min: Math.round(d.daily.temperature_2m_min[i]),
-            };
-          });
-        process(dataB, "Boston");
-        process(dataNY, "New York");
-        setWeatherData(wMap);
-      } catch (e) {}
-    };
-    fetchWeather();
-  }, []);
-
-  const persist = async (newData) => {
-    setData(newData);
-    setSaveStatus("saving");
-    let didFail = false;
-    try {
-      await setDoc(TRIP_DOC, newData);
-      setSaveStatus("saved");
-    } catch {
-      setSaveStatus("err");
-      didFail = true;
-    }
-    setTimeout(() => setSaveStatus(didFail ? "" : "cloud"), 2200);
-  };
-
-  const openAdd = () => {
-    setForm({
-      time: "",
-      icon: "🎯",
-      title: "",
-      desc: "",
-      budget: "",
-      link: "",
-      address: "",
-      confirmed: false,
-      category: "activity",
-    });
-    setEditModal({ di: sel, ai: -1 });
-    setIconPicker(false);
-  };
-
-  const openEdit = (di, ai) => {
-    setForm({ ...data.dias[di].activities[ai] });
-    setEditModal({ di, ai });
-    setIconPicker(false);
-  };
-
-  const saveAct = () => {
-    if (!form.title?.trim()) return;
-    const nDias = data.dias.map((d, i) => {
-      if (i !== editModal.di) return d;
-      const a = [...d.activities];
-      if (editModal.ai === -1) a.push({ ...form, done: false });
-      else a[editModal.ai] = form;
-      return { ...d, activities: a };
-    });
-    persist({ ...data, dias: nDias });
-    setEditModal(null);
-  };
-
-  const toggleDone = (di, ai) => {
-    const nDias = data.dias.map((d, i) => {
-      if (i !== di) return d;
-      const newActivities = d.activities.map((a, j) =>
-        j !== ai ? a : { ...a, done: !a.done }
-      );
-      return { ...d, activities: newActivities };
-    });
-    persist({ ...data, dias: nDias });
-  };
-
-  const updateComments = (text) => {
-    const nDias = data.dias.map((d, i) =>
-      i !== sel ? d : { ...d, comments: text }
-    );
-    setData({ ...data, dias: nDias });
-  };
-
-  const delAct = (di, ai) => {
-    const nDias = data.dias.map((d, i) =>
-      i !== di
-        ? d
-        : { ...d, activities: d.activities.filter((_, j) => j !== ai) }
-    );
-    persist({ ...data, dias: nDias });
-    setDelConfirm(null);
-  };
-
-  const toggleCheck = (idx) => {
-    if (!data.checklist) return;
-    const nCheck = [...data.checklist];
-    nCheck[idx].done = !nCheck[idx].done;
-    persist({ ...data, checklist: nCheck });
-  };
-
-  const addCheck = () => {
-    if (!newCheckItem.trim()) return;
-    const nCheck = data.checklist ? [...data.checklist] : [];
-    nCheck.push({ id: Date.now(), text: newCheckItem, done: false });
-    persist({ ...data, checklist: nCheck });
-    setNewCheckItem("");
-  };
-
-  const handlePhotoUpload = async (e, di, ai) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setUploading(ai);
-    try {
-      const fileRef = ref(storage, `foto_actividad_${di}_${ai}_${Date.now()}`);
-      await uploadBytes(fileRef, file);
-      const url = await getDownloadURL(fileRef);
-      const nDias = data.dias.map((d, i) => {
-        if (i !== di) return d;
-        const newActivities = d.activities.map((a, j) =>
-          j !== ai ? a : { ...a, photo: url }
-        );
-        return { ...d, activities: newActivities };
-      });
-      await persist({ ...data, dias: nDias });
-    } catch (err) {
-      console.error("Error al subir foto:", err);
-      alert(
-        "Error al subir foto. Asegúrate de haber abierto las reglas de Firebase Storage."
-      );
-    }
-    setUploading(null);
-  };
-
-  const openSuperMap = () => {
-    const acts = data.dias[sel].activities.filter((a) => a.address);
-    if (acts.length === 0)
-      return alert("No hay actividades con dirección guardada hoy.");
-    if (acts.length === 1) {
-      const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-        acts[0].address
-      )}`;
-      return window.open(url, "_blank", "noopener,noreferrer");
-    }
-    const origin = encodeURIComponent(acts[0].address);
-    const dest = encodeURIComponent(acts[acts.length - 1].address);
-    const waypoints = acts
-      .slice(1, -1)
-      .map((a) => encodeURIComponent(a.address))
-      .join("%7C");
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&waypoints=${waypoints}&travelmode=walking`;
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
-
-  const handleWeatherClick = () => {
-    const now = new Date();
-    const currTime = now.getHours() * 100 + now.getMinutes();
-    let targetAct = sortedActivities.find((a) => parseTime(a.time) >= currTime);
-    if (!targetAct) targetAct = sortedActivities[0];
-    const loc = targetAct?.address || targetAct?.title || day.city;
-    const url = `https://www.google.com/search?q=el+tiempo+por+horas+en+${encodeURIComponent(
-      loc
-    )}`;
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
-
-  const exportDayImage = () => {
-    const el = document.getElementById("export-area");
-    if (!el) return;
-    html2canvas(el, { scale: 2, useCORS: true }).then((canvas) => {
-      const link = document.createElement("a");
-      link.download = `Plan_${data.dias[sel].date.replace(/ /g, "_")}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    });
-  };
-
-  // ✅ GROQ API (compatible OpenAI): retry con backoff exponencial + timeout + cache + error UI
-  const callGroqWithRetry = async (prompt, maxRetries = 3) => {
-    const url = "https://api.groq.com/openai/v1/chat/completions";
-    const body = JSON.stringify({
-      model: GROQ_MODEL,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Eres un asistente de viajes experto. Responde SIEMPRE con JSON puro, sin markdown, sin backticks, sin texto adicional.",
-        },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.7,
-      max_tokens: 1500,
-    });
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      // AbortController con timeout de 25 segundos
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 25000);
-
-      try {
-        if (attempt > 0) {
-          const waitMs =
-            Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 1000;
-          setAiStatus(
-            `⏳ Reintentando (${attempt}/${maxRetries})... espera ${Math.ceil(
-              waitMs / 1000
-            )}s`
-          );
-          await new Promise((r) => setTimeout(r, waitMs));
-        } else {
-          setAiStatus("🔗 Conectando con Groq IA...");
-        }
-
-        const res = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${GROQ_API_KEY}`,
-          },
-          body,
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        // Si es 429 (rate limit) y quedan reintentos, esperar y reintentar
-        if (res.status === 429 && attempt < maxRetries) {
-          console.warn(
-            `Groq 429 rate limit, reintento ${attempt + 1}/${maxRetries}`
-          );
-          continue;
-        }
-
-        // Errores HTTP específicos
-        if (!res.ok) {
-          const errorBody = await res.text().catch(() => "");
-          if (res.status === 429) {
-            throw new Error("RATE_LIMIT");
-          } else if (res.status === 401) {
-            throw new Error("API_KEY_INVALID");
-          } else if (res.status === 400) {
-            // Comprobar si es un error de modelo deprecado
-            if (errorBody.includes("decommissioned")) {
-              throw new Error("MODEL_DEPRECATED");
-            }
-            throw new Error("BAD_REQUEST");
-          } else if (res.status >= 500) {
-            if (attempt < maxRetries) continue; // reintentar errores del servidor
-            throw new Error("SERVER_ERROR");
-          } else {
-            throw new Error(`HTTP_${res.status}`);
-          }
-        }
-
-        setAiStatus("🧠 Procesando respuesta...");
-        const jsonData = await res.json();
-
-        if (jsonData.error) {
-          throw new Error(jsonData.error.message || "GROQ_ERROR");
-        }
-
-        // Verificar estructura OpenAI-compatible de Groq
-        const content = jsonData.choices?.[0]?.message?.content;
-        if (!content) {
-          if (jsonData.choices?.[0]?.finish_reason === "content_filter") {
-            throw new Error("SAFETY_BLOCK");
-          }
-          throw new Error("EMPTY_RESPONSE");
-        }
-
-        return content;
-      } catch (err) {
-        clearTimeout(timeoutId);
-
-        if (err.name === "AbortError") {
-          if (attempt < maxRetries) continue;
-          throw new Error("TIMEOUT");
-        }
-
-        // Si no es un error reintentable, lanzar directamente
-        if (
-          err.message === "RATE_LIMIT" ||
-          err.message === "API_KEY_INVALID" ||
-          err.message === "BAD_REQUEST" ||
-          err.message === "SAFETY_BLOCK" ||
-          err.message === "EMPTY_RESPONSE" ||
-          err.message === "MODEL_DEPRECATED"
-        ) {
-          throw err;
-        }
-
-        // Error de red: reintentar si quedan intentos
-        if (attempt < maxRetries) {
-          console.warn(`Error de red, reintento ${attempt + 1}:`, err.message);
-          continue;
-        }
-        throw new Error("NETWORK_ERROR");
-      }
-    }
-    throw new Error("MAX_RETRIES");
-  };
-
-  const getErrorMessage = (code) => {
-    const messages = {
-      RATE_LIMIT: {
-        title: "⏱️ Demasiadas solicitudes",
-        desc: 'La API de Groq tiene un límite de peticiones. Espera 30 segundos y pulsa "Nuevas ideas".',
-        canRetry: true,
-      },
-      API_KEY_INVALID: {
-        title: "🔑 Clave API no válida",
-        desc: "La clave de Groq ha caducado o es incorrecta. Contacta con el desarrollador.",
-        canRetry: false,
-      },
-      BAD_REQUEST: {
-        title: "❌ Error en la petición",
-        desc: "Hubo un problema con el formato de la solicitud. Inténtalo de nuevo.",
-        canRetry: true,
-      },
-      SERVER_ERROR: {
-        title: "🔧 Error del servidor de Groq",
-        desc: "Los servidores de Groq están saturados. Inténtalo en unos minutos.",
-        canRetry: true,
-      },
-      MODEL_DEPRECATED: {
-        title: "🤖 Modelo no disponible",
-        desc: "El modelo de IA ha sido retirado. Contacta con el desarrollador para actualizar.",
-        canRetry: false,
-      },
-      TIMEOUT: {
-        title: "⏰ Tiempo de espera agotado",
-        desc: "La conexión tardó demasiado. Revisa tu conexión a internet e inténtalo de nuevo.",
-        canRetry: true,
-      },
-      NETWORK_ERROR: {
-        title: "📡 Error de conexión",
-        desc: "No se pudo conectar con Groq. Revisa tu conexión a internet.",
-        canRetry: true,
-      },
-      SAFETY_BLOCK: {
-        title: "🛡️ Respuesta bloqueada",
-        desc: "La IA filtró la respuesta por seguridad. Inténtalo de nuevo.",
-        canRetry: true,
-      },
-      EMPTY_RESPONSE: {
-        title: "📭 Respuesta vacía",
-        desc: "La IA no generó sugerencias. Inténtalo de nuevo.",
-        canRetry: true,
-      },
-      PARSE_ERROR: {
-        title: "🔄 Error al leer sugerencias",
-        desc: 'La IA devolvió un formato inesperado. Pulsa "Nuevas ideas" para reintentar.',
-        canRetry: true,
-      },
-      MAX_RETRIES: {
-        title: "🔄 Reintentos agotados",
-        desc: "Se intentó varias veces sin éxito. Espera un momento y vuelve a intentarlo.",
-        canRetry: true,
-      },
-    };
-    return (
-      messages[code] || {
-        title: "⚠️ Error inesperado",
-        desc: `Algo salió mal (${code}). Inténtalo de nuevo.`,
-        canRetry: true,
-      }
-    );
-  };
-
-  const fetchSugg = async (forceRefresh = false) => {
-    if (!GROQ_API_KEY) {
-      setAiError(getErrorMessage("API_KEY_INVALID"));
-      return;
-    }
-
-    // Evitar llamadas duplicadas concurrentes
-    if (fetchingRef.current) {
-      console.log("fetchSugg: ya hay una petición en curso, ignorando");
-      return;
-    }
-
-    // Comprobar caché (a menos que se fuerce refresh)
-    const cacheKey = `day_${sel}`;
-    if (!forceRefresh && suggCache[cacheKey]) {
-      console.log("fetchSugg: usando caché para día", sel);
-      setSugg(suggCache[cacheKey]);
-      setAiError(null);
-      return;
-    }
-
-    fetchingRef.current = true;
-    setAiLoading(true);
-    setSugg(null);
-    setAiError(null);
-    setAiStatus("🔗 Conectando con Groq IA...");
-
-    const d = data.dias[sel];
-    const list = d.activities.map((a) => `${a.time}: ${a.title}`).join("; ");
-
-    try {
-      const prompt = `Viaje familiar (2 adultos, adolescente de 16 y niño de 9) a ${
-        d.city
-      } el ${d.date}. Agenda actual: ${
-        list || "nada"
-      }. Sugiere 3 actividades y 2 restaurantes familiares económicos que NO estén ya en la agenda. Responde SOLO con JSON puro sin markdown ni backticks: {"activities":[{"icon":"emoji","title":"nombre","time":"hora sugerida","desc":"descripción breve de 1 línea","budget":numero_en_euros,"address":"dirección real","link":""}],"restaurants":[{"icon":"🍽️","title":"nombre real","time":"hora sugerida","desc":"descripción breve","budget":numero_en_euros,"address":"dirección real","link":""}]}`;
-
-      const rawText = await callGroqWithRetry(prompt);
-
-      setAiStatus("🧩 Interpretando sugerencias...");
-
-      // Limpieza robusta del texto de respuesta
-      let cleaned = rawText
-        .replace(/```json\s*/gi, "")
-        .replace(/```\s*/g, "")
-        .replace(/^\s*[\r\n]+/, "")
-        .trim();
-
-      // Intentar extraer JSON si hay texto antes/después
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        cleaned = jsonMatch[0];
-      }
-
-      let parsed;
-      try {
-        parsed = JSON.parse(cleaned);
-      } catch (parseErr) {
-        console.error(
-          "Error parsing JSON de Groq:",
-          parseErr,
-          "\nTexto recibido:",
-          rawText.substring(0, 500)
-        );
-        throw new Error("PARSE_ERROR");
-      }
-
-      // Validar estructura mínima
-      if (!parsed.activities && !parsed.restaurants) {
-        console.error("Estructura inesperada de Groq:", parsed);
-        throw new Error("PARSE_ERROR");
-      }
-
-      // Normalizar: asegurar que activities y restaurants sean arrays
-      parsed.activities = Array.isArray(parsed.activities)
-        ? parsed.activities
-        : [];
-      parsed.restaurants = Array.isArray(parsed.restaurants)
-        ? parsed.restaurants
-        : [];
-
-      // Limpiar valores de budget por si vienen como string
-      [...parsed.activities, ...parsed.restaurants].forEach((item) => {
-        item.budget = parseFloat(item.budget) || 0;
-        item.icon = item.icon || "🎯";
-        item.link = item.link || "";
-        item.address = item.address || "";
-      });
-
-      setSugg(parsed);
-      setAiError(null);
-
-      // Guardar en caché
-      setSuggCache((prev) => ({ ...prev, [cacheKey]: parsed }));
-    } catch (err) {
-      console.error("Error Groq completo:", err);
-      const errorInfo = getErrorMessage(err.message);
-      setAiError(errorInfo);
-      setSugg(null);
-    } finally {
-      setAiLoading(false);
-      setAiStatus("");
-      fetchingRef.current = false;
-    }
-  };
-
-  if (!data)
-    return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100vh",
-          fontSize: 24,
-        }}
-      >
-        Cargando Viaje...
-      </div>
-    );
-
-  const days = data.dias;
-  const day = days[sel];
-  const col = getDayColor(day.city, day.label);
-  const total = days.reduce(
-    (s, d) =>
-      s + d.activities.reduce((ss, a) => ss + (parseFloat(a.budget) || 0), 0),
-    0
+// ───────────────────────────────────────────────────────────────────────────
+// Sección de albergues / restaurantes
+// ───────────────────────────────────────────────────────────────────────────
+function AlberguesSection({ items, extra }) {
+  const all = extra ? [extra, ...items] : items;
+  if (!all.length) return <div className="cs-empty">Añadiendo albergues verificados de esta etapa…</div>;
+  return (
+    <div>
+      {all.map((a, i) => (
+        <div className="cs-alb" key={i}>
+          <h4>{a.name}</h4>
+          <div className="meta">
+            <span className="cs-badge" style={{ background: "#f4ede2", color: "#7a4b2a" }}>{a.type}</span>
+            {a.town} {a.price ? `· ${a.price}` : ""}
+            {a.address ? <><br />{a.address}</> : null}
+            {a.reserva ? <><br />{a.reserva}</> : null}
+            {a.note ? <><br /><i>{a.note}</i></> : null}
+          </div>
+          <div className="actions">
+            {a.phone && <a className="cs-link" href={`tel:${a.phone.replace(/\s+/g, "")}`}>📞 {a.phone}</a>}
+            {a.link && <a className="cs-link" href={a.link} target="_blank" rel="noreferrer">🔗 Ver / reservar</a>}
+          </div>
+        </div>
+      ))}
+    </div>
   );
-  const inp = {
-    width: "100%",
-    padding: "14px 16px",
-    borderRadius: 12,
-    border: "2px solid #ddd",
-    fontSize: 18,
-    boxSizing: "border-box",
-    outline: "none",
-    fontFamily: "inherit",
+}
+
+function RestaurantsSection({ items }) {
+  if (!items.length) return <div className="cs-empty">Añadiendo restaurantes recomendados de esta etapa…</div>;
+  return (
+    <div>
+      {items.map((r, i) => (
+        <div className="cs-alb" key={i}>
+          <h4>{r.name}</h4>
+          <div className="meta">
+            {r.town} {r.note ? `— ${r.note}` : ""}
+          </div>
+          {r.phone && (
+            <div className="actions">
+              <a className="cs-link" href={`tel:${r.phone.replace(/\s+/g, "")}`}>📞 {r.phone}</a>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Diario de bitácora por etapa
+// ───────────────────────────────────────────────────────────────────────────
+function DiarySection({ stage, entry, onChange }) {
+  const text = entry?.text || "";
+  const photos = entry?.photos || [];
+  const weather = entry?.weather || "";
+
+  const handlePhotos = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const newPhotos = [];
+    for (const f of files) {
+      try {
+        const dataUrl = await resizeImageFile(f);
+        newPhotos.push({ id: Date.now() + "-" + Math.random().toString(36).slice(2), dataUrl });
+      } catch {
+        // ignora archivo si falla
+      }
+    }
+    onChange({ ...entry, text, weather, photos: [...photos, ...newPhotos] });
+    e.target.value = "";
   };
 
-  const dayNum = parseInt(day.date.replace(/\D/g, ""), 10);
-  const cityKey = day.city.includes("New York") ? "New York" : "Boston";
-  const todayWeather = weatherData[`${cityKey}-${dayNum}`];
-  const sortedActivities = day.activities
-    .map((act, index) => ({ ...act, originalIndex: index }))
-    .sort((a, b) => parseTime(a.time) - parseTime(b.time));
+  const removePhoto = (id) => {
+    onChange({ ...entry, text, weather, photos: photos.filter((p) => p.id !== id) });
+  };
 
   return (
-    <div
-      style={{
-        fontFamily: "'Segoe UI',sans-serif",
-        background: "#f4f7f9",
-        minHeight: "100vh",
-        maxWidth: 550,
-        margin: "0 auto",
-        paddingBottom: 80,
-      }}
-    >
-      {/* HEADER PRINCIPAL */}
-      <div
-        className="app-header-nav"
-        style={{
-          background: "linear-gradient(135deg,#111827,#1f2937)",
-          padding: "26px 20px 20px",
-          color: "white",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-          }}
-        >
-          <div>
-            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800 }}>
-              🇺🇸 Boston & New York
-            </h1>
-            <p style={{ margin: "6px 0 0", opacity: 0.8, fontSize: 16 }}>
-              3–11 Abril · Viaje David, Sandra, Inés y Álvaro
-            </p>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <div
-              style={{
-                background:
-                  saveStatus === "saved"
-                    ? "#27ae60"
-                    : saveStatus === "saving"
-                    ? "#e67e22"
-                    : saveStatus === "cloud"
-                    ? "#1a73e8"
-                    : "rgba(255,255,255,0.15)",
-                padding: "6px 14px",
-                borderRadius: 12,
-                fontSize: 16,
-                fontWeight: 700,
-                transition: "background 0.3s",
-                marginBottom: 8,
-              }}
-            >
-              {saveStatus === "saving"
-                ? "💾..."
-                : saveStatus === "saved"
-                ? "✅ Guardado"
-                : saveStatus === "cloud"
-                ? "☁️ En vivo"
-                : "..."}
+    <div className="cs-diary">
+      <div className="cs-row" style={{ marginBottom: 8 }}>
+        {["☀️", "⛅", "🌦️", "🌧️", "🥵", "🥶"].map((w) => (
+          <button
+            key={w}
+            className="cs-sec-btn"
+            style={{ padding: "5px 9px" }}
+            onClick={() => onChange({ ...entry, text, photos, weather: w })}
+          >
+            <span style={{ opacity: weather === w ? 1 : 0.4 }}>{w}</span>
+          </button>
+        ))}
+      </div>
+      <textarea
+        placeholder={`Escribe aquí el resumen del día: cómo te has sentido, con quién has caminado, anécdotas, paisajes, dolores... (Etapa ${stage.id}: ${stage.from} → ${stage.to})`}
+        value={text}
+        onChange={(e) => onChange({ ...entry, weather, photos, text: e.target.value })}
+      />
+      <div className="cs-row" style={{ marginTop: 8 }}>
+        <label className="cs-btn secondary" style={{ cursor: "pointer" }}>
+          📷 Añadir fotos del carrete
+          <input type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: "none" }} />
+        </label>
+        <span style={{ fontSize: 12, color: "#96876f" }}>{photos.length} foto(s) guardada(s)</span>
+      </div>
+      {photos.length > 0 && (
+        <div className="cs-photos">
+          {photos.map((p) => (
+            <div className="cs-photo-wrap" key={p.id}>
+              <img src={p.dataUrl} alt="" />
+              <button className="cs-photo-del" onClick={() => removePhoto(p.id)}>✕</button>
             </div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>
-              💰 {total.toFixed(0)}€
-            </div>
-          </div>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            marginTop: 20,
-            overflowX: "auto",
-            paddingBottom: 6,
-          }}
-        >
-          {[
-            ["plan", "📅 Plan"],
-            ["logbook", "📖 Bitácora"],
-            ["checklist", "🎒 Maleta"],
-            ["budget", "💰 Gastos"],
-            ["suggestions", "✨ Ideas IA"],
-            ["summary", "🏁 Resumen"],
-          ].map(([v, l]) => (
-            <button
-              key={v}
-              onClick={() => {
-                setView(v);
-                if (v === "suggestions") fetchSugg(); // usa caché si existe
-              }}
-              style={{
-                flexShrink: 0,
-                background: view === v ? "white" : "rgba(255,255,255,0.15)",
-                color: view === v ? "#111827" : "white",
-                border: "none",
-                borderRadius: 12,
-                padding: "10px 16px",
-                fontSize: 16,
-                fontWeight: 800,
-                cursor: "pointer",
-              }}
-            >
-              {l}
-            </button>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Vista de una etapa completa (con sub-secciones)
+// ───────────────────────────────────────────────────────────────────────────
+const SECTIONS = [
+  { key: "info", label: "📋 Descripción" },
+  { key: "mapa", label: "🗺️ Mapa y GPS" },
+  { key: "albergues", label: "🛏️ Albergues" },
+  { key: "restaurantes", label: "🍽️ Restaurantes" },
+  { key: "diario", label: "📔 Mi diario" },
+];
+
+function StageView({ stage, diaryEntry, onDiaryChange, gpxPoints, onGpxUpload, walkStat, onWalkUpdate }) {
+  const [section, setSection] = useState("info");
+  return (
+    <div>
+      <div className="cs-card">
+        <div className="cs-row" style={{ marginBottom: 6 }}>
+          <span className="cs-badge" style={{ background: "#e8f4fd", color: "#1a73e8" }}>{stage.km} km</span>
+          <span className="cs-badge" style={{ background: "#fef6e4", color: "#a86a3d" }}>{stage.difficulty}</span>
+        </div>
+        <h2 style={{ margin: "2px 0" }}>Etapa {stage.id}: {stage.from} → {stage.to}</h2>
+        <div style={{ fontSize: 12.5, color: "#6b5c48" }}>{stage.date}</div>
       </div>
 
-      {/* SELECTOR DE DÍAS */}
-      {view !== "checklist" && view !== "budget" && view !== "summary" && (
-        <div
-          className="day-selector-nav"
-          style={{
-            display: "flex",
-            gap: 10,
-            overflowX: "auto",
-            padding: "16px 20px",
-            background: "white",
-            boxShadow: "0 3px 10px rgba(0,0,0,0.06)",
-          }}
-        >
-          {days.map((d, i) => {
-            const dCol = getDayColor(d.city, d.label);
-            return (
-              <button
-                key={i}
-                onClick={() => {
-                  setSel(i);
-                  setExp(null);
-                  // No resetear sugg: el caché lo maneja al cambiar de vista
-                }}
-                style={{
-                  flexShrink: 0,
-                  background: sel === i ? dCol : "#f5f7fa",
-                  color: sel === i ? "white" : "#4b5563",
-                  border: "none",
-                  borderRadius: 16,
-                  padding: "10px 16px",
-                  cursor: "pointer",
-                  fontSize: 15,
-                  fontWeight: 800,
-                  boxShadow: sel === i ? `0 4px 12px ${dCol}55` : "none",
-                }}
-              >
-                <div style={{ fontSize: 20, marginBottom: 4 }}>{d.emoji}</div>
-                <div>{d.date.split(" ").slice(1, 3).join(" ")}</div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      <div style={{ padding: "20px 20px 0" }}>
-        {/* === VISTA: PLAN === */}
-        {view === "plan" && (
-          <>
-            <div
-              id="export-area"
-              style={{ background: "#f4f7f9", paddingBottom: 10 }}
-            >
-              <div
-                style={{
-                  background: `linear-gradient(135deg,${col},${col}dd)`,
-                  borderRadius: 20,
-                  padding: "24px",
-                  color: "white",
-                  marginBottom: 20,
-                  boxShadow: `0 6px 16px ${col}44`,
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: 40, marginBottom: 8 }}>
-                      {day.emoji}
-                    </div>
-                    <h2
-                      style={{
-                        margin: "0 0 6px",
-                        fontSize: 28,
-                        fontWeight: 900,
-                      }}
-                    >
-                      {day.date}
-                    </h2>
-                    <div
-                      style={{ fontSize: 18, opacity: 0.95, fontWeight: 700 }}
-                    >
-                      📍 {day.city}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div
-                      onClick={handleWeatherClick}
-                      title="Haz clic para ver la previsión por horas"
-                      style={{
-                        background: "rgba(255,255,255,0.25)",
-                        borderRadius: 16,
-                        padding: "12px 16px",
-                        marginBottom: 12,
-                        backdropFilter: "blur(5px)",
-                        cursor: "pointer",
-                        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                        transition: "transform 0.2s",
-                      }}
-                    >
-                      {todayWeather ? (
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 10,
-                          }}
-                        >
-                          <span style={{ fontSize: 28 }}>
-                            {todayWeather.icon}
-                          </span>
-                          <div
-                            style={{
-                              fontSize: 16,
-                              lineHeight: 1.3,
-                              fontWeight: 800,
-                              textAlign: "left",
-                            }}
-                          >
-                            <div style={{ color: "#fef08a" }}>
-                              {todayWeather.max}º Máx
-                            </div>
-                            <div style={{ color: "#bae6fd" }}>
-                              {todayWeather.min}º Mín
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: 16, fontWeight: 700 }}>
-                          Cargando clima...
-                        </div>
-                      )}
-                    </div>
-                    <div
-                      style={{ fontSize: 16, fontWeight: 800, opacity: 0.9 }}
-                    >
-                      {day.activities.length} planes hoy
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div
-                data-html2canvas-ignore="true"
-                style={{ display: "flex", gap: 10, marginBottom: 20 }}
-              >
-                <button
-                  onClick={openSuperMap}
-                  style={{
-                    flex: 1,
-                    background: "#111827",
-                    color: "white",
-                    border: "none",
-                    borderRadius: 14,
-                    padding: "14px",
-                    fontSize: 16,
-                    fontWeight: 800,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                  }}
-                >
-                  🗺️ Súper Mapa
-                </button>
-                <button
-                  onClick={exportDayImage}
-                  style={{
-                    flex: 1,
-                    background: "white",
-                    color: col,
-                    border: `2px solid ${col}`,
-                    borderRadius: 14,
-                    padding: "14px",
-                    fontSize: 16,
-                    fontWeight: 800,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                  }}
-                >
-                  📴 Descargar
-                </button>
-              </div>
-
-              {sortedActivities.map((a, i) => {
-                const ci = CAT[a.category] || CAT.activity;
-                const isExp = exp === i;
-                const isUploadingThis = uploading === a.originalIndex;
-                return (
-                  <div
-                    key={i}
-                    style={{
-                      background: "white",
-                      borderRadius: 20,
-                      marginBottom: 14,
-                      overflow: "hidden",
-                      border: `2px solid ${
-                        a.done
-                          ? "#27ae60"
-                          : a.confirmed
-                          ? col + "66"
-                          : "transparent"
-                      }`,
-                      opacity: a.done ? 0.75 : 1,
-                      boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 14,
-                        padding: "18px 20px",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => setExp(isExp ? null : i)}
-                    >
-                      <span style={{ fontSize: 34, flexShrink: 0 }}>
-                        {a.icon}
-                      </span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            flexWrap: "wrap",
-                            marginBottom: 6,
-                          }}
-                        >
-                          <span
-                            style={{
-                              fontWeight: 900,
-                              fontSize: 20,
-                              color: "#111827",
-                              textDecoration: a.done ? "line-through" : "none",
-                            }}
-                          >
-                            {a.title}
-                          </span>
-                          {a.confirmed && !a.done && (
-                            <span
-                              style={{
-                                background: col,
-                                color: "white",
-                                fontSize: 14,
-                                padding: "4px 8px",
-                                borderRadius: 8,
-                                fontWeight: 800,
-                              }}
-                            >
-                              Reserva OK
-                            </span>
-                          )}
-                          {a.photo && !isExp && (
-                            <span style={{ fontSize: 16 }}>📸</span>
-                          )}
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 10,
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          <span
-                            style={{
-                              fontSize: 22,
-                              color: "#111827",
-                              fontWeight: 900,
-                              background: "#f3f4f6",
-                              padding: "4px 10px",
-                              borderRadius: 8,
-                            }}
-                          >
-                            ⏰ {a.time}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: 16,
-                              background: ci.bg,
-                              color: ci.col,
-                              padding: "4px 10px",
-                              borderRadius: 8,
-                              fontWeight: 800,
-                            }}
-                          >
-                            {ci.label}
-                          </span>
-                        </div>
-                      </div>
-                      <div
-                        data-html2canvas-ignore="true"
-                        style={{
-                          display: "flex",
-                          gap: 4,
-                          flexShrink: 0,
-                          flexDirection: "column",
-                          alignItems: "flex-end",
-                        }}
-                      >
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleDone(sel, a.originalIndex);
-                          }}
-                          style={{
-                            background: a.done ? "#27ae60" : "#f3f4f6",
-                            color: a.done ? "white" : "#374151",
-                            border: "none",
-                            borderRadius: 10,
-                            padding: "8px 14px",
-                            cursor: "pointer",
-                            fontSize: 15,
-                            fontWeight: 800,
-                          }}
-                        >
-                          {a.done ? "✅ Lista" : "Hecha"}
-                        </button>
-                      </div>
-                    </div>
-
-                    {(isExp || window.html2canvas) && (
-                      <div
-                        style={{
-                          padding: "0 20px 20px 68px",
-                          borderTop: "2px solid #f3f4f6",
-                        }}
-                      >
-                        <p
-                          style={{
-                            fontSize: 18,
-                            color: "#4b5563",
-                            margin: "14px 0 12px",
-                            lineHeight: 1.5,
-                            fontWeight: 500,
-                          }}
-                        >
-                          {a.desc}
-                        </p>
-                        <div
-                          data-html2canvas-ignore="true"
-                          style={{ margin: "14px 0" }}
-                        >
-                          {a.photo ? (
-                            <div style={{ position: "relative" }}>
-                              <img
-                                src={a.photo}
-                                alt={a.title}
-                                style={{
-                                  width: "100%",
-                                  maxHeight: 250,
-                                  objectFit: "cover",
-                                  borderRadius: 14,
-                                  border: "1px solid #eee",
-                                }}
-                              />
-                              <label
-                                style={{
-                                  position: "absolute",
-                                  bottom: 10,
-                                  right: 10,
-                                  background: "rgba(0,0,0,0.7)",
-                                  color: "white",
-                                  padding: "8px 16px",
-                                  borderRadius: 10,
-                                  fontSize: 15,
-                                  cursor: "pointer",
-                                  fontWeight: 800,
-                                }}
-                              >
-                                {isUploadingThis ? "⏳..." : "🔄 Cambiar"}
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  onChange={(e) =>
-                                    handlePhotoUpload(e, sel, a.originalIndex)
-                                  }
-                                  style={{ display: "none" }}
-                                  disabled={uploading !== null}
-                                />
-                              </label>
-                            </div>
-                          ) : (
-                            <label
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                gap: 10,
-                                background: "#f9fafb",
-                                padding: "16px",
-                                borderRadius: 14,
-                                cursor: "pointer",
-                                color: "#4b5563",
-                                fontWeight: 800,
-                                fontSize: 16,
-                                border: `3px dashed #d1d5db`,
-                              }}
-                            >
-                              {isUploadingThis
-                                ? "⏳ Subiendo..."
-                                : "📸 Añadir foto de este momento"}
-                              <input
-                                type="file"
-                                accept="image/*"
-                                onChange={(e) =>
-                                  handlePhotoUpload(e, sel, a.originalIndex)
-                                }
-                                style={{ display: "none" }}
-                                disabled={uploading !== null}
-                              />
-                            </label>
-                          )}
-                        </div>
-                        {a.address && (
-                          <div style={{ marginBottom: 14 }}>
-                            <a
-                              data-html2canvas-ignore="true"
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                                a.address
-                              )}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 8,
-                                fontSize: 16,
-                                color: col,
-                                fontWeight: 800,
-                                textDecoration: "none",
-                                background: `${col}15`,
-                                padding: "8px 16px",
-                                borderRadius: 10,
-                              }}
-                            >
-                              📍 Ir a: {a.address} ↗
-                            </a>
-                            <div
-                              style={{ display: "none" }}
-                              className="show-on-export"
-                            >
-                              📍 {a.address}
-                            </div>
-                          </div>
-                        )}
-                        <div
-                          data-html2canvas-ignore="true"
-                          style={{ display: "flex", gap: 10, marginTop: 16 }}
-                        >
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEdit(sel, a.originalIndex);
-                            }}
-                            style={{
-                              background: "#f3f4f6",
-                              border: "none",
-                              borderRadius: 10,
-                              padding: "10px 18px",
-                              fontSize: 16,
-                              fontWeight: 800,
-                              color: "#374151",
-                            }}
-                          >
-                            ✏️ Editar
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDelConfirm({ di: sel, ai: a.originalIndex });
-                            }}
-                            style={{
-                              background: "#fee2e2",
-                              color: "#b91c1c",
-                              border: "none",
-                              borderRadius: 10,
-                              padding: "10px 18px",
-                              fontSize: 16,
-                              fontWeight: 800,
-                            }}
-                          >
-                            🗑️ Borrar
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <button
-              onClick={openAdd}
-              style={{
-                width: "100%",
-                background: `${col}12`,
-                border: `3px dashed ${col}66`,
-                borderRadius: 20,
-                padding: "20px",
-                color: col,
-                fontSize: 18,
-                fontWeight: 900,
-                cursor: "pointer",
-                marginTop: 10,
-              }}
-            >
-              ＋ Añadir nueva actividad
-            </button>
-          </>
-        )}
-
-        {/* === VISTA: BITÁCORA === */}
-        {view === "logbook" && (
-          <div
-            style={{
-              background: "white",
-              borderRadius: 20,
-              padding: "24px",
-              marginBottom: 16,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.04)",
-            }}
+      <div className="cs-sections">
+        {SECTIONS.map((s) => (
+          <button
+            key={s.key}
+            className={"cs-sec-btn" + (section === s.key ? " active" : "")}
+            onClick={() => setSection(s.key)}
           >
-            <h3
-              style={{
-                margin: "0 0 20px",
-                fontSize: 22,
-                color: "#111827",
-                fontWeight: 900,
-              }}
-            >
-              📖 Diario del día
-            </h3>
-            <p
-              style={{
-                fontSize: 16,
-                color: "#6b7280",
-                marginBottom: 20,
-                lineHeight: 1.5,
-              }}
-            >
-              Escribe aquí cómo ha ido el día. Para guardar fotos, hazlo
-              directamente en las actividades de la pestaña 📅 Plan.
-            </p>
-            <textarea
-              value={day.comments || ""}
-              onChange={(e) => updateComments(e.target.value)}
-              placeholder="Ej: Hoy nos hemos reído mucho en el parque..."
-              style={{
-                ...inp,
-                minHeight: 200,
-                resize: "vertical",
-                marginBottom: 16,
-                fontSize: 18,
-                lineHeight: 1.6,
-              }}
-            />
-            <button
-              onClick={() => persist(data)}
-              style={{
-                width: "100%",
-                background: col,
-                color: "white",
-                border: "none",
-                borderRadius: 14,
-                padding: "18px",
-                fontSize: 18,
-                fontWeight: 900,
-                cursor: "pointer",
-                marginBottom: 30,
-              }}
-            >
-              💾 Guardar notas
-            </button>
-            <h4
-              style={{
-                fontSize: 18,
-                color: "#374151",
-                borderBottom: "3px solid #f3f4f6",
-                paddingBottom: 10,
-                marginBottom: 16,
-                fontWeight: 900,
-              }}
-            >
-              🏆 Hitos Completados Hoy
-            </h4>
-            {sortedActivities
-              .filter((a) => a.done)
-              .map((a, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    marginBottom: 12,
-                    background: "#f0fdf4",
-                    padding: "14px 18px",
-                    borderRadius: 14,
-                    borderLeft: "6px solid #27ae60",
-                  }}
-                >
-                  <span style={{ fontSize: 26 }}>{a.icon}</span>
-                  <span
-                    style={{ fontSize: 18, fontWeight: 800, color: "#166534" }}
-                  >
-                    {a.title}
-                  </span>
-                </div>
-              ))}
-          </div>
-        )}
-
-        {/* === VISTA: MALETA === */}
-        {view === "checklist" && (
-          <div
-            style={{
-              background: "white",
-              borderRadius: 20,
-              padding: "24px",
-              marginBottom: 16,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.04)",
-            }}
-          >
-            <h3
-              style={{
-                margin: "0 0 20px",
-                fontSize: 22,
-                fontWeight: 900,
-                color: "#111827",
-              }}
-            >
-              🎒 Lista de Preparativos
-            </h3>
-            <div style={{ marginBottom: 24 }}>
-              {data.checklist?.map((item, idx) => (
-                <div
-                  key={item.id}
-                  onClick={() => toggleCheck(idx)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 14,
-                    padding: "16px 20px",
-                    background: item.done ? "#f0fdf4" : "#f9fafb",
-                    borderRadius: 14,
-                    marginBottom: 10,
-                    cursor: "pointer",
-                    border: `2px solid ${item.done ? "#bbf7d0" : "#e5e7eb"}`,
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 10,
-                      background: item.done ? "#27ae60" : "white",
-                      border: `3px solid ${item.done ? "#27ae60" : "#d1d5db"}`,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: "white",
-                      fontWeight: 900,
-                      fontSize: 18,
-                    }}
-                  >
-                    {item.done && "✓"}
-                  </div>
-                  <span
-                    style={{
-                      fontSize: 18,
-                      fontWeight: item.done ? 600 : 800,
-                      color: item.done ? "#166534" : "#374151",
-                      textDecoration: item.done ? "line-through" : "none",
-                    }}
-                  >
-                    {item.text}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 10 }}>
-              <input
-                value={newCheckItem}
-                onChange={(e) => setNewCheckItem(e.target.value)}
-                placeholder="Ej: Comprar medicinas..."
-                style={{ ...inp, flex: 1 }}
-                onKeyDown={(e) => e.key === "Enter" && addCheck()}
-              />
-              <button
-                onClick={addCheck}
-                style={{
-                  background: "#111827",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 14,
-                  padding: "0 22px",
-                  fontSize: 18,
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                Añadir
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* === VISTA: PRESUPUESTO === */}
-        {view === "budget" && (
-          <div
-            style={{
-              background: "white",
-              borderRadius: 20,
-              padding: "24px",
-              marginBottom: 16,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.04)",
-            }}
-          >
-            <h3
-              style={{
-                margin: "0 0 20px",
-                fontSize: 22,
-                fontWeight: 900,
-                color: "#111827",
-              }}
-            >
-              💰 Resumen de gastos
-            </h3>
-            {days.map((d, di) => {
-              const t = d.activities.reduce(
-                (s, a) => s + (parseFloat(a.budget) || 0),
-                0
-              );
-              return (
-                <div
-                  key={di}
-                  onClick={() => {
-                    setSel(di);
-                    setView("plan");
-                  }}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "16px 0",
-                    borderBottom: "2px solid #f3f4f6",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div style={{ fontSize: 18 }}>
-                    {d.emoji}{" "}
-                    <span
-                      style={{
-                        color:
-                          sel === di ? getDayColor(d.city, d.label) : "#4b5563",
-                        fontWeight: sel === di ? 900 : 700,
-                      }}
-                    >
-                      {d.date}
-                    </span>
-                  </div>
-                  <span
-                    style={{
-                      fontWeight: 900,
-                      color: t > 0 ? "#111827" : "#d1d5db",
-                      fontSize: 18,
-                    }}
-                  >
-                    {t > 0 ? `${t.toFixed(0)}€` : "—"}
-                  </span>
-                </div>
-              );
-            })}
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                padding: "20px 0 0",
-                fontWeight: 900,
-                fontSize: 22,
-              }}
-            >
-              <span>TOTAL ESTIMADO</span>
-              <span style={{ color: "#1a73e8" }}>{total.toFixed(0)}€</span>
-            </div>
-          </div>
-        )}
-
-        {/* === VISTA: SUGERENCIAS === */}
-        {view === "suggestions" && (
-          <div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 6,
-              }}
-            >
-              <div>
-                <h3
-                  style={{
-                    margin: "0 0 4px",
-                    fontSize: 20,
-                    fontWeight: 900,
-                    color: "#111827",
-                  }}
-                >
-                  ✨ Ideas para {day.city}
-                </h3>
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: 14,
-                    color: "#6b7280",
-                    fontWeight: 600,
-                  }}
-                >
-                  Sugerencias personalizadas por IA
-                </p>
-              </div>
-              <button
-                onClick={() => fetchSugg(true)}
-                disabled={aiLoading}
-                style={{
-                  background: aiLoading ? "#9ca3af" : col,
-                  color: "white",
-                  border: "none",
-                  borderRadius: 14,
-                  padding: "12px 20px",
-                  fontSize: 15,
-                  fontWeight: 900,
-                  cursor: aiLoading ? "not-allowed" : "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  opacity: aiLoading ? 0.7 : 1,
-                  transition: "all 0.2s",
-                }}
-              >
-                {aiLoading ? "⏳ Pensando..." : "🔄 Nuevas ideas"}
-              </button>
-            </div>
-
-            {/* Estado de carga con animación */}
-            {aiLoading && (
-              <div
-                style={{
-                  background: "linear-gradient(135deg, #eff6ff, #f0f9ff)",
-                  borderRadius: 16,
-                  padding: "24px",
-                  marginBottom: 16,
-                  marginTop: 14,
-                  textAlign: "center",
-                  border: "2px solid #bfdbfe",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 40,
-                    marginBottom: 12,
-                    animation: "pulse 1.5s infinite",
-                  }}
-                >
-                  🧠
-                </div>
-                <div
-                  style={{
-                    fontSize: 17,
-                    fontWeight: 800,
-                    color: "#1e40af",
-                    marginBottom: 8,
-                  }}
-                >
-                  Generando ideas...
-                </div>
-                <div
-                  style={{ fontSize: 15, color: "#3b82f6", fontWeight: 600 }}
-                >
-                  {aiStatus || "Conectando con Groq IA..."}
-                </div>
-                <div
-                  style={{
-                    marginTop: 14,
-                    height: 4,
-                    background: "#dbeafe",
-                    borderRadius: 4,
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      height: "100%",
-                      background: "linear-gradient(90deg, #3b82f6, #1d4ed8)",
-                      borderRadius: 4,
-                      animation: "loading 2s ease-in-out infinite",
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Panel de error visual (no alert) */}
-            {aiError && !aiLoading && (
-              <div
-                style={{
-                  background: aiError.canRetry ? "#fef2f2" : "#fef9ee",
-                  borderRadius: 16,
-                  padding: "20px 24px",
-                  marginBottom: 16,
-                  marginTop: 14,
-                  border: `2px solid ${
-                    aiError.canRetry ? "#fecaca" : "#fde68a"
-                  }`,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 18,
-                    fontWeight: 900,
-                    color: aiError.canRetry ? "#991b1b" : "#92400e",
-                    marginBottom: 8,
-                  }}
-                >
-                  {aiError.title}
-                </div>
-                <p
-                  style={{
-                    margin: "0 0 14px",
-                    fontSize: 15,
-                    color: "#6b7280",
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {aiError.desc}
-                </p>
-                {aiError.canRetry && (
-                  <button
-                    onClick={() => fetchSugg(true)}
-                    style={{
-                      background: col,
-                      color: "white",
-                      border: "none",
-                      borderRadius: 12,
-                      padding: "12px 24px",
-                      fontSize: 16,
-                      fontWeight: 900,
-                      cursor: "pointer",
-                      width: "100%",
-                    }}
-                  >
-                    🔄 Reintentar
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Sugerencias de actividades */}
-            {sugg?.activities?.length > 0 && (
-              <div style={{ marginTop: 14 }}>
-                <h4
-                  style={{
-                    margin: "0 0 12px",
-                    fontSize: 17,
-                    fontWeight: 900,
-                    color: "#374151",
-                  }}
-                >
-                  🎯 Actividades sugeridas
-                </h4>
-                {sugg.activities.map((a, i) => (
-                  <SuggCard
-                    key={`act-${i}`}
-                    act={a}
-                    col={col}
-                    onAdd={() => {
-                      const nDias = [...data.dias];
-                      nDias[sel].activities.push({
-                        ...a,
-                        category: "activity",
-                        done: false,
-                        confirmed: false,
-                      });
-                      persist({ ...data, dias: nDias });
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* Sugerencias de restaurantes */}
-            {sugg?.restaurants?.length > 0 && (
-              <div style={{ marginTop: 14 }}>
-                <h4
-                  style={{
-                    margin: "0 0 12px",
-                    fontSize: 17,
-                    fontWeight: 900,
-                    color: "#374151",
-                  }}
-                >
-                  🍽️ Restaurantes sugeridos
-                </h4>
-                {sugg.restaurants.map((r, i) => (
-                  <SuggCard
-                    key={`rest-${i}`}
-                    act={r}
-                    col={col}
-                    onAdd={() => {
-                      const nDias = [...data.dias];
-                      nDias[sel].activities.push({
-                        ...r,
-                        category: "restaurant",
-                        done: false,
-                        confirmed: false,
-                      });
-                      persist({ ...data, dias: nDias });
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* Estado vacío: sin sugerencias y sin error y sin carga */}
-            {!sugg && !aiError && !aiLoading && (
-              <div
-                style={{
-                  textAlign: "center",
-                  padding: "40px 20px",
-                  marginTop: 14,
-                  background: "#f9fafb",
-                  borderRadius: 20,
-                  border: "2px dashed #d1d5db",
-                }}
-              >
-                <div style={{ fontSize: 48, marginBottom: 12 }}>✨</div>
-                <p
-                  style={{
-                    fontSize: 17,
-                    fontWeight: 800,
-                    color: "#374151",
-                    margin: "0 0 8px",
-                  }}
-                >
-                  ¿Necesitas inspiración?
-                </p>
-                <p
-                  style={{ fontSize: 15, color: "#6b7280", margin: "0 0 20px" }}
-                >
-                  Pulsa "Nuevas ideas" para que la IA te sugiera planes
-                </p>
-                <button
-                  onClick={() => fetchSugg(true)}
-                  style={{
-                    background: col,
-                    color: "white",
-                    border: "none",
-                    borderRadius: 14,
-                    padding: "14px 32px",
-                    fontSize: 17,
-                    fontWeight: 900,
-                    cursor: "pointer",
-                  }}
-                >
-                  ✨ Generar ideas para {day.city}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* === VISTA: RESUMEN FINAL === */}
-        {view === "summary" && (
-          <div
-            style={{
-              background: "white",
-              borderRadius: 20,
-              padding: "28px",
-              marginBottom: 16,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.04)",
-            }}
-          >
-            <div
-              className="hide-on-print"
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 28,
-              }}
-            >
-              <h3
-                style={{
-                  margin: 0,
-                  fontSize: 24,
-                  fontWeight: 900,
-                  color: "#111827",
-                }}
-              >
-                📖 Gran Resumen
-              </h3>
-              <button
-                onClick={() => window.print()}
-                style={{
-                  background: "#1a73e8",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 12,
-                  padding: "14px 20px",
-                  fontSize: 16,
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                🖨️ Guardar PDF
-              </button>
-            </div>
-            <div
-              className="print-only-header"
-              style={{
-                display: "none",
-                textAlign: "center",
-                marginBottom: 40,
-                paddingBottom: 20,
-                borderBottom: "4px solid #111827",
-              }}
-            >
-              <h1
-                style={{
-                  fontSize: 36,
-                  marginBottom: 12,
-                  fontWeight: 900,
-                  color: "#111827",
-                }}
-              >
-                🇺🇸 Nuestro Viaje a Boston & NY
-              </h1>
-              <p style={{ fontSize: 20, color: "#4b5563", fontWeight: 700 }}>
-                Viaje David, Sandra, Inés y Álvaro • Abril 2025
-              </p>
-            </div>
-            {days.map((d, i) => (
-              <div
-                key={i}
-                style={{
-                  marginBottom: 40,
-                  paddingBottom: 30,
-                  borderBottom:
-                    i < days.length - 1 ? "4px double #e5e7eb" : "none",
-                  pageBreakInside: "avoid",
-                }}
-              >
-                <h4
-                  style={{
-                    fontSize: 26,
-                    color: getDayColor(d.city, d.label),
-                    marginBottom: 20,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    fontWeight: 900,
-                  }}
-                >
-                  <span style={{ fontSize: 32 }}>{d.emoji}</span> {d.date} -{" "}
-                  {d.city}
-                </h4>
-                {d.comments && (
-                  <div
-                    style={{
-                      background: "#f9fafb",
-                      padding: "20px 24px",
-                      borderRadius: 16,
-                      borderLeft: `6px solid ${getDayColor(d.city, d.label)}`,
-                      marginBottom: 28,
-                    }}
-                  >
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: 18,
-                        lineHeight: 1.6,
-                        color: "#374151",
-                        fontStyle: "italic",
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      "{d.comments}"
-                    </p>
-                  </div>
-                )}
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 24 }}
-                >
-                  {d.activities.map((act, actIdx) => (
-                    <div key={actIdx} style={{ pageBreakInside: "avoid" }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 12,
-                          marginBottom: 10,
-                        }}
-                      >
-                        <span style={{ fontSize: 28 }}>{act.icon}</span>
-                        <div>
-                          <div
-                            style={{
-                              fontWeight: 900,
-                              fontSize: 20,
-                              color: "#111827",
-                            }}
-                          >
-                            {act.title}
-                          </div>
-                          {act.time && (
-                            <div
-                              style={{
-                                fontSize: 16,
-                                color: "#6b7280",
-                                fontWeight: 800,
-                              }}
-                            >
-                              {act.time}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      {act.photo && (
-                        <div style={{ marginTop: 14 }}>
-                          <img
-                            src={act.photo}
-                            alt={act.title}
-                            style={{
-                              width: "100%",
-                              maxHeight: 400,
-                              objectFit: "cover",
-                              borderRadius: 16,
-                              boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
-                            }}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-            <div
-              style={{
-                marginTop: 40,
-                textAlign: "center",
-                padding: 28,
-                background: "#f0fdf4",
-                borderRadius: 20,
-                border: "3px solid #bbf7d0",
-                pageBreakInside: "avoid",
-              }}
-            >
-              <h3
-                style={{
-                  margin: 0,
-                  color: "#166534",
-                  fontSize: 26,
-                  fontWeight: 900,
-                }}
-              >
-                💰 Presupuesto Final del Viaje: {total.toFixed(0)}€
-              </h3>
-            </div>
-          </div>
-        )}
+            {s.label}
+          </button>
+        ))}
       </div>
 
-      {/* MODALES EDITAR Y AÑADIR */}
-      {editModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.7)",
-            zIndex: 100,
-            display: "flex",
-            alignItems: "flex-end",
-          }}
-          onClick={() => setEditModal(null)}
-        >
-          <div
-            style={{
-              background: "white",
-              borderRadius: "28px 28px 0 0",
-              padding: "28px 24px",
-              width: "100%",
-              maxWidth: 550,
-              margin: "0 auto",
-              maxHeight: "90vh",
-              overflowY: "auto",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 24,
-              }}
-            >
-              <h3 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>
-                {editModal.ai === -1
-                  ? "➕ Añadir actividad"
-                  : "✏️ Editar actividad"}
-              </h3>
-              <button
-                onClick={() => setEditModal(null)}
-                style={{
-                  background: "#f3f4f6",
-                  border: "none",
-                  borderRadius: 12,
-                  padding: "10px 16px",
-                  fontSize: 18,
-                  fontWeight: 900,
-                }}
-              >
-                ✕
-              </button>
+      {section === "info" && (
+        <div className="cs-card">
+          <p style={{ lineHeight: 1.5 }}>{stage.description}</p>
+          <p style={{ fontSize: 12.5, color: "#6b5c48" }}><b>Desnivel:</b> {stage.desnivel}</p>
+          {stage.variants?.length > 0 && (
+            <div>
+              <b style={{ fontSize: 13 }}>Variantes:</b>
+              <ul style={{ paddingLeft: 18, fontSize: 13 }}>
+                {stage.variants.map((v, i) => (
+                  <li key={i}><b>{v.name}:</b> {v.note}</li>
+                ))}
+              </ul>
             </div>
-            <div style={{ marginBottom: 20 }}>
-              <button
-                onClick={() => setIconPicker(!iconPicker)}
-                style={{
-                  fontSize: 36,
-                  background: "#f9fafb",
-                  border: "3px solid #e5e7eb",
-                  borderRadius: 16,
-                  padding: "10px 22px",
-                  cursor: "pointer",
-                }}
-              >
-                {form.icon || "🎯"}
-              </button>
-              {iconPicker && (
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: 8,
-                    marginTop: 14,
-                    background: "#f9fafb",
-                    borderRadius: 16,
-                    padding: 16,
-                    maxHeight: 200,
-                    overflowY: "auto",
-                  }}
-                >
-                  {ICONS.map((ic) => (
-                    <button
-                      key={ic}
-                      onClick={() => {
-                        setForm((f) => ({ ...f, icon: ic }));
-                        setIconPicker(false);
-                      }}
-                      style={{
-                        background: form.icon === ic ? "#1a73e8" : "white",
-                        border: "none",
-                        borderRadius: 10,
-                        padding: "8px",
-                        cursor: "pointer",
-                        fontSize: 26,
-                      }}
-                    >
-                      {ic}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 16,
-                marginBottom: 16,
-              }}
-            >
-              <div>
-                <label
-                  style={{
-                    fontSize: 15,
-                    color: "#6b7280",
-                    fontWeight: 800,
-                    marginBottom: 6,
-                    display: "block",
-                  }}
-                >
-                  Título *
-                </label>
-                <input
-                  value={form.title || ""}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, title: e.target.value }))
-                  }
-                  style={inp}
-                />
-              </div>
-              <div>
-                <label
-                  style={{
-                    fontSize: 15,
-                    color: "#6b7280",
-                    fontWeight: 800,
-                    marginBottom: 6,
-                    display: "block",
-                  }}
-                >
-                  Hora
-                </label>
-                <input
-                  value={form.time || ""}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, time: e.target.value }))
-                  }
-                  style={inp}
-                  placeholder="10:00, Mañana..."
-                />
-              </div>
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <label
-                style={{
-                  fontSize: 15,
-                  color: "#6b7280",
-                  fontWeight: 800,
-                  marginBottom: 6,
-                  display: "block",
-                }}
-              >
-                Descripción
-              </label>
-              <textarea
-                value={form.desc || ""}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, desc: e.target.value }))
-                }
-                style={{ ...inp, minHeight: 100, resize: "vertical" }}
-              />
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 16,
-                marginBottom: 16,
-              }}
-            >
-              <div>
-                <label
-                  style={{
-                    fontSize: 15,
-                    color: "#6b7280",
-                    fontWeight: 800,
-                    marginBottom: 6,
-                    display: "block",
-                  }}
-                >
-                  Presupuesto (€)
-                </label>
-                <input
-                  type="number"
-                  value={form.budget || ""}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, budget: e.target.value }))
-                  }
-                  style={inp}
-                />
-              </div>
-              <div>
-                <label
-                  style={{
-                    fontSize: 15,
-                    color: "#6b7280",
-                    fontWeight: 800,
-                    marginBottom: 6,
-                    display: "block",
-                  }}
-                >
-                  Categoría
-                </label>
-                <select
-                  value={form.category || "activity"}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, category: e.target.value }))
-                  }
-                  style={{ ...inp, background: "white" }}
-                >
-                  <option value="activity">🎯 Actividad</option>
-                  <option value="restaurant">🍽️ Restaurante</option>
-                  <option value="hotel">🏨 Alojamiento</option>
-                  <option value="transport">🚗 Transporte</option>
-                </select>
-              </div>
-            </div>
-            <div style={{ marginBottom: 24 }}>
-              <label
-                style={{
-                  fontSize: 15,
-                  color: "#6b7280",
-                  fontWeight: 800,
-                  marginBottom: 6,
-                  display: "block",
-                }}
-              >
-                Dirección (Se abrirá en Maps)
-              </label>
-              <input
-                value={form.address || ""}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, address: e.target.value }))
-                }
-                style={inp}
-                placeholder="Dirección exacta o lugar"
-              />
-            </div>
-            <button
-              onClick={saveAct}
-              style={{
-                width: "100%",
-                background: "#1a73e8",
-                color: "white",
-                border: "none",
-                borderRadius: 16,
-                padding: "18px",
-                fontSize: 18,
-                fontWeight: 900,
-                cursor: "pointer",
-              }}
-            >
-              Guardar Cambios
-            </button>
+          )}
+          <b style={{ fontSize: 13 }}>Pueblos de la etapa:</b>
+          <div style={{ fontSize: 13, marginTop: 4 }}>
+            {stage.waypoints.map((w) => w.name).join(" → ")}
           </div>
         </div>
       )}
 
-      {/* CONFIRMAR BORRADO */}
-      {delConfirm && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.7)",
-            zIndex: 100,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 20,
-          }}
-          onClick={() => setDelConfirm(null)}
-        >
-          <div
-            style={{
-              background: "white",
-              borderRadius: 24,
-              padding: "28px",
-              maxWidth: 350,
-              width: "100%",
-              textAlign: "center",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ margin: "0 0 12px", fontSize: 22, fontWeight: 900 }}>
-              ¿Eliminar actividad?
-            </h3>
-            <p style={{ color: "#4b5563", fontSize: 16, margin: "0 0 24px" }}>
-              Esto no se puede deshacer.
-            </p>
-            <div style={{ display: "flex", gap: 12 }}>
-              <button
-                onClick={() => setDelConfirm(null)}
-                style={{
-                  flex: 1,
-                  background: "#f3f4f6",
-                  color: "#374151",
-                  border: "none",
-                  borderRadius: 14,
-                  padding: "14px",
-                  cursor: "pointer",
-                  fontSize: 16,
-                  fontWeight: 900,
-                }}
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => delAct(delConfirm.di, delConfirm.ai)}
-                style={{
-                  flex: 1,
-                  background: "#ef4444",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 14,
-                  padding: "14px",
-                  cursor: "pointer",
-                  fontSize: 16,
-                  fontWeight: 900,
-                }}
-              >
-                Sí, borrar
-              </button>
-            </div>
-          </div>
+      {section === "mapa" && (
+        <div className="cs-card">
+          <StageMap
+            stage={stage}
+            gpxPoints={gpxPoints}
+            onGpxUpload={onGpxUpload}
+            walkStat={walkStat}
+            onWalkUpdate={onWalkUpdate}
+          />
         </div>
       )}
 
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { transform: scale(1); opacity: 1; }
-          50% { transform: scale(1.15); opacity: 0.8; }
+      {section === "albergues" && (
+        <div className="cs-card">
+          <AlberguesSection items={stage.albergues} extra={stage.id === 1 ? OURENSE_ALBERGUE_SALIDA : null} />
+          {stage.id === 6 && (
+            <div className="cs-alb" style={{ background: "#fbf5ea" }}>
+              <h4>🎓 Oficina del Peregrino — recoger la Compostela</h4>
+              <div className="meta">
+                {OFICINA_PEREGRINO.address}
+                <br />Horario: {OFICINA_PEREGRINO.horario}
+              </div>
+              <div className="actions">
+                <a className="cs-link" href={`tel:${OFICINA_PEREGRINO.phone.replace(/\s+/g, "")}`}>📞 {OFICINA_PEREGRINO.phone}</a>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {section === "restaurantes" && (
+        <div className="cs-card">
+          <RestaurantsSection items={stage.restaurants} />
+        </div>
+      )}
+
+      {section === "diario" && (
+        <div className="cs-card">
+          <DiarySection stage={stage} entry={diaryEntry} onChange={onDiaryChange} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Resumen / overview
+// ───────────────────────────────────────────────────────────────────────────
+function ResumenView({ onGoStage }) {
+  const totalKm = STAGES.reduce((s, e) => s + e.km, 0);
+  const mapDivRef = useRef(null);
+  const mapRef = useRef(null);
+
+  useEffect(() => {
+    const map = L.map(mapDivRef.current).setView([42.6, -8.25], 9);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18,
+      attribution: "© OpenStreetMap",
+    }).addTo(map);
+    mapRef.current = map;
+    const colors = ["#7a4b2a", "#a86a3d", "#c9a878", "#588157", "#1a73e8", "#e63946"];
+    let allPts = [];
+    STAGES.forEach((s, i) => {
+      const latlngs = s.waypoints.map((w) => [w.lat, w.lon]);
+      allPts = allPts.concat(latlngs);
+      L.polyline(latlngs, { color: colors[i % colors.length], weight: 4, dashArray: "6 6" }).addTo(map);
+      L.marker(latlngs[0], { icon: emojiIcon("🥾", 18) }).addTo(map);
+    });
+    const finalWp = STAGES[STAGES.length - 1].waypoints.slice(-1)[0];
+    L.marker([finalWp.lat, finalWp.lon], { icon: emojiIcon("🏆", 22) }).addTo(map);
+    map.fitBounds(L.latLngBounds(allPts), { padding: [20, 20] });
+    return () => map.remove();
+  }, []);
+
+  return (
+    <div>
+      <div className="cs-card">
+        <h2 style={{ marginTop: 0 }}>🐚 Camino Sanabrés — Ourense → Santiago</h2>
+        <p style={{ fontSize: 13.5, lineHeight: 1.5 }}>
+          {totalKm.toFixed(1)} km en 6 etapas, del <b>martes 18</b> al <b>domingo 23 de agosto de 2026</b>.
+          Al superar los 100 km hasta Santiago, esta ruta da derecho a la <b>Compostela</b> — recuerda sellar la
+          credencial al menos dos veces al día (albergue + bar/iglesia) desde Ourense.
+        </p>
+        <div className="cs-map" ref={mapDivRef} />
+      </div>
+
+      <div className="cs-card">
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Antes de salir — noche del lunes en Ourense</h3>
+        <AlberguesSection items={[]} extra={OURENSE_ALBERGUE_SALIDA} />
+      </div>
+
+      <div className="cs-card">
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Las 6 etapas</h3>
+        {STAGES.map((s) => (
+          <div
+            key={s.id}
+            className="cs-row"
+            style={{ justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #f1e8d8", cursor: "pointer" }}
+            onClick={() => onGoStage(`stage-${s.id}`)}
+          >
+            <div>
+              <b>Etapa {s.id}</b> · {s.from} → {s.to}
+              <div style={{ fontSize: 11.5, color: "#96876f" }}>{s.date}</div>
+            </div>
+            <div style={{ fontWeight: 700, color: "#7a4b2a" }}>{s.km} km ›</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="cs-card" style={{ border: "2px solid #e63946" }}>
+        <h3 style={{ marginTop: 0, fontSize: 15, color: "#c0392b" }}>⚠️ Aviso importante — Etapa 2 (miércoles 19)</h3>
+        <p style={{ fontSize: 13, lineHeight: 1.5 }}>
+          El albergue municipal de <b>Castro Dozón está cerrado</b> desde 2023/24 y no reabrirá hasta el Xacobeo 2027
+          (está en obras). Antes de salir el martes, confirma por teléfono alguna alternativa: el albergue del
+          <b> Monasterio de Oseira</b> (variante larga, +4,3 km), <b>O Refugio</b> en Cotelas, o una casa rural en
+          Dozón. Todo el detalle y teléfonos están en la pestaña "2. Castro" → Albergues.
+        </p>
+      </div>
+
+      <div className="cs-card">
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Consejos rápidos</h3>
+        <ul style={{ fontSize: 13, lineHeight: 1.6, paddingLeft: 18 }}>
+          <li>Botas rotas, calcetines nuevos: ¡nunca al revés! Usa calzado ya probado.</li>
+          <li>Sal temprano (antes de las 8h) en agosto para evitar el calor en las subidas de la etapa 1 y 3.</li>
+          <li>Los albergues públicos de la Xunta no se reservan: llegar pronto en temporada alta.</li>
+          <li>Descarga los tracks GPX de cada etapa antes de salir (dentro de cada etapa → Mapa y GPS) para que funcionen sin cobertura.</li>
+          <li>Guarda agua para los tramos de pista forestal entre pueblos, especialmente etapas 5 y 6.</li>
+          <li>Sella la credencial al menos dos veces al día desde Ourense para que la Compostela sea válida.</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Diario completo + exportación a PDF
+// ───────────────────────────────────────────────────────────────────────────
+async function generateDiaryPDF(diary) {
+  const docPdf = new jsPDF({ unit: "mm", format: "a4" });
+  const pageW = 210, pageH = 297, margin = 18;
+
+  docPdf.setFillColor(122, 75, 42);
+  docPdf.rect(0, 0, pageW, pageH, "F");
+  docPdf.setTextColor(255, 255, 255);
+  docPdf.setFontSize(26);
+  docPdf.text("Diario del", pageW / 2, 120, { align: "center" });
+  docPdf.text("Camino Sanabrés", pageW / 2, 132, { align: "center" });
+  docPdf.setFontSize(13);
+  docPdf.text("Ourense → Santiago de Compostela", pageW / 2, 145, { align: "center" });
+  docPdf.setFontSize(11);
+  docPdf.text("18 – 23 de agosto de 2026", pageW / 2, 155, { align: "center" });
+  docPdf.setFontSize(30);
+  docPdf.text("🐚", pageW / 2, 90, { align: "center" });
+
+  for (const stage of STAGES) {
+    const entry = diary[stage.id];
+    if (!entry || (!entry.text && (!entry.photos || !entry.photos.length))) continue;
+
+    docPdf.addPage();
+    let y = margin;
+    docPdf.setTextColor(122, 75, 42);
+    docPdf.setFontSize(16);
+    docPdf.text(`Etapa ${stage.id}: ${stage.from} → ${stage.to}`, margin, y);
+    y += 7;
+    docPdf.setFontSize(10);
+    docPdf.setTextColor(120, 110, 95);
+    docPdf.text(`${stage.date}  ·  ${stage.km} km  ${entry.weather ? " · " + entry.weather : ""}`, margin, y);
+    y += 8;
+    docPdf.setDrawColor(220, 205, 180);
+    docPdf.line(margin, y, pageW - margin, y);
+    y += 8;
+
+    if (entry.text) {
+      docPdf.setTextColor(40, 30, 20);
+      docPdf.setFontSize(11.5);
+      const lines = docPdf.splitTextToSize(entry.text, pageW - margin * 2);
+      for (const line of lines) {
+        if (y > pageH - margin) {
+          docPdf.addPage();
+          y = margin;
         }
-        @keyframes loading {
-          0% { width: 0%; margin-left: 0; }
-          50% { width: 60%; margin-left: 20%; }
-          100% { width: 0%; margin-left: 100%; }
+        docPdf.text(line, margin, y);
+        y += 5.5;
+      }
+      y += 6;
+    }
+
+    const photos = entry.photos || [];
+    if (photos.length) {
+      const cols = 2;
+      const gap = 6;
+      const cellW = (pageW - margin * 2 - gap) / cols;
+      const cellH = cellW * 0.75;
+      let col = 0;
+      for (const p of photos) {
+        if (y + cellH > pageH - margin) {
+          docPdf.addPage();
+          y = margin;
+          col = 0;
         }
-        @media print {
-          body { background: white !important; margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .hide-on-print, .app-header-nav, .day-selector-nav { display: none !important; }
-          .print-only-header { display: block !important; }
-          .show-on-export { display: block !important; color: #4b5563; font-size: 15px; font-weight: 800; margin-top: 6px; }
-          @page { margin: 1.5cm; }
+        const x = margin + col * (cellW + gap);
+        try {
+          docPdf.addImage(p.dataUrl, "JPEG", x, y, cellW, cellH, undefined, "FAST");
+        } catch {
+          // ignora imagen corrupta
         }
-      `}</style>
+        col++;
+        if (col >= cols) {
+          col = 0;
+          y += cellH + gap;
+        }
+      }
+      if (col !== 0) y += cellH + gap;
+    }
+  }
+
+  docPdf.save("diario-camino-sanabres.pdf");
+}
+
+function DiarioView({ diary }) {
+  const daysWithContent = STAGES.filter(
+    (s) => diary[s.id] && (diary[s.id].text || (diary[s.id].photos || []).length)
+  );
+  return (
+    <div>
+      <div className="cs-card">
+        <h2 style={{ marginTop: 0 }}>📔 Diario de bitácora</h2>
+        <p style={{ fontSize: 13, color: "#6b5c48" }}>
+          Todo lo que escribas y las fotos que añadas en cada etapa (pestaña "Mi diario") aparecen aquí compiladas.
+          Cuando termines el Camino, expórtalo a PDF para imprimirlo o guardarlo de recuerdo.
+        </p>
+        <button className="cs-btn" onClick={() => generateDiaryPDF(diary)}>
+          📄 Exportar diario completo a PDF
+        </button>
+      </div>
+      {daysWithContent.length === 0 && (
+        <div className="cs-card"><div className="cs-empty">Aún no has escrito nada — ve a una etapa y abre "Mi diario".</div></div>
+      )}
+      {daysWithContent.map((s) => {
+        const e = diary[s.id];
+        return (
+          <div className="cs-card" key={s.id}>
+            <h3 style={{ margin: "0 0 4px" }}>Etapa {s.id}: {s.from} → {s.to} {e.weather}</h3>
+            <div style={{ fontSize: 11.5, color: "#96876f", marginBottom: 8 }}>{s.date}</div>
+            {e.text && <p style={{ whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.5 }}>{e.text}</p>}
+            {(e.photos || []).length > 0 && (
+              <div className="cs-photos">
+                {e.photos.map((p) => <img src={p.dataUrl} alt="" key={p.id} />)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// App principal
+// ───────────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [activeTab, setActiveTab] = useState("resumen");
+  const [diary, setDiary] = useState({});
+  const [gpx, setGpx] = useState({});
+  const [walk, setWalk] = useState({});
+  const [syncedOnce, setSyncedOnce] = useState(false);
+
+  useEffect(() => {
+    injectGlobalStyles();
+    const local = loadLocal();
+    setDiary(local.diary || {});
+    setGpx(local.gpx || {});
+    setWalk(local.walk || {});
+
+    const unsub = onSnapshot(
+      TRIP_DOC,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          setDiary((prev) => ({ ...(data.diary || {}), ...prev }));
+          if (!syncedOnce) {
+            if (data.diary) setDiary(data.diary);
+            if (data.gpx) setGpx(data.gpx);
+          }
+        }
+        setSyncedOnce(true);
+      },
+      () => setSyncedOnce(true)
+    );
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    saveLocal({ diary, gpx, walk });
+    setDoc(TRIP_DOC, { diary, gpx, updatedAt: Date.now() }, { merge: true }).catch(() => {});
+  }, [diary, gpx, walk]);
+
+  const updateDiary = (stageId, entry) => {
+    setDiary((prev) => ({ ...prev, [stageId]: entry }));
+  };
+
+  const updateGpx = (stageId, points) => {
+    setGpx((prev) => ({ ...prev, [stageId]: points }));
+  };
+
+  const updateWalk = (stageId, fix) => {
+    setWalk((prev) => {
+      const cur = prev[stageId] || { distanceM: 0, lastFix: null };
+      let add = 0;
+      if (cur.lastFix) {
+        const d = haversine(cur.lastFix.lat, cur.lastFix.lon, fix.lat, fix.lon);
+        if (d > 3 && d < 200) add = d;
+      }
+      return { ...prev, [stageId]: { distanceM: cur.distanceM + add, lastFix: fix } };
+    });
+  };
+
+  const tabs = [
+    { key: "resumen", label: "🏠 Resumen" },
+    ...STAGES.map((s) => ({ key: `stage-${s.id}`, label: `${s.id}. ${s.to.split(" ")[0]}` })),
+    { key: "diario", label: "📔 Diario" },
+  ];
+
+  return (
+    <div className="cs-app">
+      <div className="cs-header">
+        <h1>🐚 Camino Sanabrés</h1>
+        <p>Ourense → Santiago de Compostela · 18–23 agosto 2026</p>
+      </div>
+      <div className="cs-tabs">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            className={"cs-tab" + (activeTab === t.key ? " active" : "")}
+            onClick={() => setActiveTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="cs-content">
+        {activeTab === "resumen" && <ResumenView onGoStage={setActiveTab} />}
+        {activeTab === "diario" && <DiarioView diary={diary} />}
+        {STAGES.filter((s) => activeTab === `stage-${s.id}`).map((stage) => (
+          <StageView
+            key={stage.id}
+            stage={stage}
+            diaryEntry={diary[stage.id]}
+            onDiaryChange={(entry) => updateDiary(stage.id, entry)}
+            gpxPoints={gpx[stage.id]}
+            onGpxUpload={(points) => updateGpx(stage.id, points)}
+            walkStat={walk[stage.id]}
+            onWalkUpdate={(fix) => updateWalk(stage.id, fix)}
+          />
+        ))}
+      </div>
     </div>
   );
 }
