@@ -2,7 +2,6 @@
   "name": "viaje-boston-ny",
   "version": "1.0.0",
   "private": true,
-  "homepage": "https://davidpeanton-star.github.io/BOSNYC",
   "dependencies": {
     "firebase": "^10.8.0",
     "html2canvas": "^1.4.1",
