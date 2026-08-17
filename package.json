@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
+    "@fontsource/plus-jakarta-sans": "^5.0.0",
     "firebase": "^10.8.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^2.5.1",
