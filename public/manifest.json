@@ -1,0 +1,11 @@
+{
+  "short_name": "Camino Sanabrés",
+  "name": "Camino Sanabrés – Ourense a Santiago",
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#178A55",
+  "background_color": "#FFFBF2",
+  "icons": [
+    { "src": "icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any maskable" }
+  ]
+}
